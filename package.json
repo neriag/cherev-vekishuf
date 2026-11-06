@@ -1,0 +1,21 @@
+{
+  "name": "cherev-vekishuf",
+  "version": "1.0.0",
+  "description": "חרב וכישוף: גיבורי הממלכה — משחק אסטרטגיה בתורות בהשראת Heroes of Might and Magic III, בעברית, ב-Three.js",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --open",
+    "build": "vite build",
+    "preview": "vite preview --open"
+  },
+  "dependencies": {
+    "@fontsource/frank-ruhl-libre": "^5.3.0",
+    "@fontsource/suez-one": "^5.3.0",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1",
+    "vite": "^8.3.6"
+  }
+}
