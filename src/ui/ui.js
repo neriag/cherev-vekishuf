@@ -54,6 +54,7 @@ export class UI {
     this.root.innerHTML = `
       <div id="hud-adventure" class="hud-layer hidden">
         <header id="top-bar" class="top-bar"></header>
+        <button id="mobile-panel-toggle" class="mobile-panel-toggle" title="פתח / הסתר לוח בקרה">☰ לוח בקרה</button>
         <aside id="side-panel" class="side-panel">
           <div class="minimap-box panel-frame">
             <div class="panel-title">מפת הממלכה</div>
@@ -84,6 +85,8 @@ export class UI {
     `;
     this.hudAdv = this.root.querySelector('#hud-adventure');
     this.topBar = this.root.querySelector('#top-bar');
+    this.sidePanelEl = this.root.querySelector('#side-panel');
+    this.mobileToggleBtn = this.root.querySelector('#mobile-panel-toggle');
     this.heroListEl = this.root.querySelector('#hero-list');
     this.townListEl = this.root.querySelector('#town-list');
     this.inspectorEl = this.root.querySelector('#inspector');
@@ -96,6 +99,14 @@ export class UI {
     this.toastBox = this.root.querySelector('#toast-box');
     this.minimapCanvas = this.root.querySelector('#minimap');
     this.setupMinimapEvents();
+
+    if (this.mobileToggleBtn && this.sidePanelEl) {
+      this.mobileToggleBtn.onclick = () => {
+        this.sfx('click');
+        const open = this.sidePanelEl.classList.toggle('mobile-open');
+        this.mobileToggleBtn.textContent = open ? '✕ הסתר לוח' : '☰ לוח בקרה';
+      };
+    }
 
     window.addEventListener('pointerdown', (e) => {
       audio.init();
@@ -134,13 +145,28 @@ export class UI {
   setupAdventurePointer() {
     if (this._advCleanup) this._advCleanup();
     let downPos = null, dragging = false, camStart = null;
+    const activeTouches = new Map();
+    let pinchStartDist = 0, pinchStartZoom = 0;
     const gl = engine.renderer.domElement;
 
     const onMove = (e) => {
       if (this.activeScreen !== 'adventure' || this.modalLayer.children.length) return;
+      if (e.pointerType === 'touch' && activeTouches.has(e.pointerId)) {
+        activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (activeTouches.size === 2) {
+          const pts = [...activeTouches.values()];
+          const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          if (pinchStartDist > 0 && d > 0) {
+            this.advView.distTarget = Math.max(7, Math.min(34, pinchStartZoom * (pinchStartDist / d)));
+          }
+          dragging = true;
+          return;
+        }
+      }
       if (downPos) {
         const dx = e.clientX - downPos.x, dy = e.clientY - downPos.y;
-        if (Math.hypot(dx, dy) > 6) dragging = true;
+        const thresh = e.pointerType === 'touch' ? 11 : 6;
+        if (Math.hypot(dx, dy) > thresh) dragging = true;
         if (dragging && camStart) {
           const factor = this.advView.dist * 0.0022;
           this.advView.camTarget.x = camStart.x - dx * factor;
@@ -160,6 +186,16 @@ export class UI {
 
     const onDown = (e) => {
       if (this.activeScreen !== 'adventure' || this.modalLayer.children.length || e.target !== gl) return;
+      if (e.pointerType === 'touch') {
+        activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (activeTouches.size === 2) {
+          const pts = [...activeTouches.values()];
+          pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          pinchStartZoom = this.advView.distTarget;
+          dragging = true;
+          return;
+        }
+      }
       if (e.button === 2) {
         const tile = this.advView.screenToTile(e.clientX, e.clientY);
         if (tile) this.showTileContext(tile.x, tile.y, e.clientX, e.clientY);
@@ -173,6 +209,10 @@ export class UI {
     };
 
     const onUp = (e) => {
+      if (e.pointerType === 'touch') {
+        activeTouches.delete(e.pointerId);
+        if (activeTouches.size < 2) pinchStartDist = 0;
+      }
       if (this.activeScreen !== 'adventure' || e.button !== 0 || !downPos) return;
       const wasDrag = dragging;
       downPos = null; dragging = false;
@@ -189,11 +229,13 @@ export class UI {
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerdown', onDown);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
     window.addEventListener('wheel', onWheel, { passive: true });
     this._advCleanup = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerdown', onDown);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
       window.removeEventListener('wheel', onWheel);
     };
   }

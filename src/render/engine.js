@@ -79,23 +79,27 @@ class Engine {
   }
 
   init(container) {
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '') ||
+      (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches);
     const r = new THREE.WebGLRenderer({
       antialias: true,
-      powerPreference: 'high-performance',
+      powerPreference: isMobile ? 'default' : 'high-performance',
     });
     const gl = r.getContext();
     const dbg = gl?.getExtension?.('WEBGL_debug_renderer_info');
     const gpuRenderer = (dbg && gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) || '';
     const isSoftware = /swiftshader|llvmpipe|software/i.test(gpuRenderer);
 
-    const pr = isSoftware ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+    const maxPr = isSoftware ? 1 : isMobile ? 1.5 : 2;
+    const pr = Math.min(window.devicePixelRatio || 1, maxPr);
+    this.maxPr = maxPr;
     r.setPixelRatio(pr);
     r.setSize(window.innerWidth, window.innerHeight);
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 0.88;
     r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.shadowMap.type = isMobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     container.appendChild(r.domElement);
     r.domElement.id = 'gl';
     this.renderer = r;
@@ -112,29 +116,44 @@ class Engine {
       console.warn('PMREM init fallback:', e);
     }
 
-    // Setup Post-Processing Composer (RenderPass -> UnrealBloomPass -> OutputPass -> FantasyGradeShader)
+    // Setup Post-Processing Composer (skip multisampled HalfFloat on mobile/unsupported WebGL to avoid black FBO)
     try {
-      const w = window.innerWidth, h = window.innerHeight;
-      const rt = new THREE.WebGLRenderTarget(w * pr, h * pr, {
-        type: THREE.HalfFloatType,
-        samples: isSoftware ? 0 : 2,
-      });
-      this.composer = new EffectComposer(r, rt);
-      this.renderPass = new RenderPass(new THREE.Scene(), new THREE.PerspectiveCamera());
-      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.25, 0.48, 1.18);
-      this.outputPass = new OutputPass();
-      this.gradePass = new ShaderPass(FantasyGradeShader);
-      this.gradePass.uniforms.uResolution.value.set(w * pr, h * pr);
-      this.gradePass.uniforms.uSharpness.value = 0.34;
+      const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
+      const isWebGL2 = r.capabilities.isWebGL2;
+      const canHalfFloatRT = isWebGL2
+        ? !!gl.getExtension('EXT_color_buffer_float')
+        : !!gl.getExtension('EXT_color_buffer_half_float');
+      if (!isMobile && canHalfFloatRT) {
+        const rt = new THREE.WebGLRenderTarget(Math.round(w * pr), Math.round(h * pr), {
+          type: THREE.HalfFloatType,
+          samples: isSoftware ? 0 : 2,
+        });
+        this.composer = new EffectComposer(r, rt);
+        this.renderPass = new RenderPass(new THREE.Scene(), new THREE.PerspectiveCamera());
+        this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.25, 0.48, 1.18);
+        this.outputPass = new OutputPass();
+        this.gradePass = new ShaderPass(FantasyGradeShader);
+        this.gradePass.uniforms.uResolution.value.set(w * pr, h * pr);
+        this.gradePass.uniforms.uSharpness.value = 0.34;
 
-      this.composer.addPass(this.renderPass);
-      this.composer.addPass(this.bloomPass);
-      this.composer.addPass(this.outputPass);
-      this.composer.addPass(this.gradePass);
+        this.composer.addPass(this.renderPass);
+        this.composer.addPass(this.bloomPass);
+        this.composer.addPass(this.outputPass);
+        this.composer.addPass(this.gradePass);
+      } else {
+        // Direct ACES Filmic rendering on mobile GPUs — crisp, fast, zero FBO compatibility risk
+        r.toneMappingExposure = 0.96;
+        this.composer = null;
+      }
     } catch (e) {
       console.warn('Post-processing init fallback:', e);
       this.composer = null;
     }
+
+    r.domElement.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      console.warn('WebGL context lost');
+    });
 
     window.addEventListener('resize', () => this.resize());
     const loop = () => {
@@ -161,9 +180,15 @@ class Engine {
     if (!this.view || !this.view.scene || !this.view.camera) return;
     this.view.onBeforeRender?.();
     if (this.composer && this.renderPass) {
-      this.renderPass.scene = this.view.scene;
-      this.renderPass.camera = this.view.camera;
-      this.composer.render();
+      try {
+        this.renderPass.scene = this.view.scene;
+        this.renderPass.camera = this.view.camera;
+        this.composer.render();
+      } catch (e) {
+        console.warn('Composer render fallback:', e);
+        this.composer = null;
+        this.renderer.render(this.view.scene, this.view.camera);
+      }
     } else if (this.view.render) {
       this.view.render(this.renderer);
     } else {
@@ -184,8 +209,9 @@ class Engine {
   }
 
   resize() {
-    const w = window.innerWidth, h = window.innerHeight;
-    const pr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
+    const pr = Math.min(window.devicePixelRatio || 1, this.maxPr || 2);
+    this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h);
     if (this.composer) {
       this.composer.setSize(w, h);

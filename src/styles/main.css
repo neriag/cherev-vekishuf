@@ -30,23 +30,28 @@ html, body {
   padding: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
+  overscroll-behavior: none;
   background: #080706;
   color: var(--text-main);
   font-family: var(--font-body);
   direction: rtl;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #canvas-container {
   position: fixed;
   inset: 0;
   z-index: 1;
+  touch-action: none;
 }
 
 #gl {
   display: block;
   width: 100%;
   height: 100%;
+  touch-action: none;
 }
 
 #world-overlay {
@@ -1842,4 +1847,246 @@ button:not(:disabled):active {
   border-radius: 4px;
   margin: 3px 0;
 }
+
+.mobile-panel-toggle {
+  display: none;
+}
+
+/* ============================================================================
+   Mobile & Narrow Screen Responsive Layout
+   ============================================================================ */
+@media (max-width: 900px) {
+  .top-bar {
+    height: auto;
+    min-height: 40px;
+    padding: 4px 8px;
+    gap: 6px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .res-strip {
+    flex-wrap: nowrap;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .res-pill {
+    padding: 2px 6px;
+    font-size: 0.78rem;
+    gap: 3px;
+  }
+
+  .res-inc { display: none; }
+
+  .top-right {
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .date-badge {
+    font-size: 0.74rem;
+    padding: 2px 6px;
+    white-space: nowrap;
+  }
+
+  .icon-btn {
+    width: 28px;
+    height: 28px;
+  }
+
+  .mobile-panel-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    position: absolute;
+    top: 48px;
+    right: 8px;
+    z-index: 15;
+    pointer-events: auto;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1.5px solid var(--gold-bright);
+    background: rgba(24, 18, 12, 0.94);
+    color: var(--gold-bright);
+    font-family: var(--font-title);
+    font-size: 0.84rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.7);
+  }
+
+  .side-panel {
+    top: 86px;
+    right: 8px;
+    bottom: 34px;
+    width: min(290px, calc(100vw - 16px));
+    overflow-y: auto;
+    transform: translateX(calc(100% + 18px));
+    transition: transform 0.22s ease;
+    z-index: 14;
+  }
+
+  .side-panel.mobile-open {
+    transform: translateX(0);
+  }
+
+  #minimap {
+    width: 144px;
+    height: 144px;
+  }
+
+  .status-bar {
+    height: 28px;
+    font-size: 0.75rem;
+    padding: 0 8px;
+  }
+
+  /* Main menu mobile */
+  .main-menu-screen {
+    padding: 10px;
+    align-items: flex-start;
+    overflow-y: auto;
+  }
+
+  .menu-card {
+    width: 100%;
+    max-height: none;
+    padding: 14px 14px;
+    gap: 10px;
+  }
+
+  .brand-title { font-size: 1.75rem; }
+  .brand-subtitle { font-size: 0.85rem; }
+
+  .setup-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .hero-pick-strip {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .hero-pick-btn img {
+    width: 36px;
+    height: 36px;
+  }
+
+  .hero-preview-box {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .menu-footer-actions .btn-gold.lg,
+  .menu-footer-actions .btn-silver.lg {
+    width: 100%;
+    justify-content: center;
+    font-size: 0.96rem;
+    padding: 9px 14px;
+  }
+
+  /* Town screen mobile */
+  .town-top-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 10px;
+  }
+
+  .town-bottom-bar {
+    grid-template-columns: 1fr;
+    max-height: 44vh;
+    overflow-y: auto;
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .town-actions-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+  }
+
+  .town-act-btn {
+    font-size: 0.76rem;
+    padding: 5px 7px;
+  }
+
+  .town-army-row {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .town-armies-col .army-strip {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 3px;
+  }
+
+  .town-armies-col .army-slot {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+  }
+
+  /* Battle screen mobile */
+  .battle-top-bar {
+    padding: 5px 8px;
+    gap: 6px;
+  }
+
+  .b-side-card {
+    padding: 4px 8px;
+    gap: 6px;
+  }
+
+  .b-side-name { font-size: 0.84rem; }
+  .b-round-badge { font-size: 0.84rem; padding: 3px 10px; }
+
+  .battle-bottom-bar {
+    width: calc(100vw - 12px);
+    padding: 6px 8px;
+    gap: 4px;
+  }
+
+  .bq-item {
+    width: 36px;
+    height: 36px;
+  }
+
+  .b-preview-line { font-size: 0.78rem; }
+
+  .b-controls-row {
+    gap: 4px;
+  }
+
+  .b-controls-row .cmd-btn {
+    padding: 5px 7px;
+    font-size: 0.74rem;
+  }
+
+  /* Modals mobile */
+  .modal-backdrop { padding: 8px; }
+  .modal-card { padding: 12px 14px; }
+
+  .build-grid,
+  .tavern-grid,
+  .spellbook-grid,
+  .hero-screen-grid,
+  .market-grid,
+  .ko-res-grid,
+  .meet-grid,
+  .cas-section {
+    grid-template-columns: 1fr;
+  }
+
+  .town-rec-card {
+    grid-template-columns: auto 1fr;
+  }
+
+  .trc-buy {
+    grid-column: span 2;
+  }
+}
+
 
