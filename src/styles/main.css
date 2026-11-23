@@ -1763,3 +1763,83 @@ button:not(:disabled):active {
   flex-direction: column;
   gap: 6px;
 }
+
+.modal-actions.wrap {
+  flex-wrap: wrap;
+}
+
+/* Town quick army toolbar */
+.town-army-tools {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  padding-top: 2px;
+}
+
+.town-tool-btn {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--gold-dark);
+  background: linear-gradient(180deg, #3c3022, #201810);
+  color: var(--text-main);
+  font-size: 0.78rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.town-tool-btn:hover:not(:disabled) {
+  border-color: var(--gold-bright);
+  background: linear-gradient(180deg, #54422a, #2c2116);
+}
+
+.town-tool-btn.gold {
+  border-color: var(--gold-main);
+  background: linear-gradient(180deg, #6d4f18, #3d2a0b);
+  color: var(--gold-bright);
+}
+
+/* Threat assessment & visited badges */
+.threat-pill {
+  font-size: 0.8rem;
+  padding: 3px 8px;
+  border-radius: 4px;
+  margin: 4px 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.45);
+}
+.threat-pill.threat-trivial { color: #7dff96; border-color: rgba(125, 255, 150, 0.4); }
+.threat-pill.threat-easy { color: #b8f28a; border-color: rgba(184, 242, 138, 0.4); }
+.threat-pill.threat-fair { color: #ffe078; border-color: rgba(255, 224, 120, 0.45); }
+.threat-pill.threat-hard { color: #ff9c54; border-color: rgba(255, 156, 84, 0.5); }
+.threat-pill.threat-deadly { color: #ff6060; border-color: rgba(255, 96, 96, 0.6); background: rgba(120, 18, 18, 0.42); }
+
+.ctx-visit {
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin: 2px 0 4px;
+}
+.ctx-visit.ready { color: #7dff96; }
+.ctx-visit.done { color: #a89f92; }
+
+/* Tavern retreated hero highlight */
+.tavern-card.returning {
+  border-color: var(--gold-bright);
+  background: rgba(95, 68, 22, 0.32);
+}
+
+.fled-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #ffe89a;
+  background: rgba(180, 120, 20, 0.35);
+  border: 1px solid var(--gold-bright);
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin: 3px 0;
+}
+

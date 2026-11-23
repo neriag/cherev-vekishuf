@@ -19,6 +19,7 @@ import {
   stoneWallTexture,
   stoneBumpTexture,
   glowTexture,
+  contactShadowTexture,
 } from './textures.js';
 import { tween, ease, wait } from './engine.js';
 import { audio } from '../audio/audio.js';
@@ -32,6 +33,16 @@ export function hexToWorld(col, row) {
   const z = (row - (ROWS - 1) / 2) * HEX_H;
   return new THREE.Vector3(x, 0, z);
 }
+
+const ARENA_SKIES = {
+  grass: ['#25599e', '#6da7dc', '#c9dff0'],
+  dirt:  ['#375d8f', '#89a7c4', '#d8cdb8'],
+  sand:  ['#2b6ba8', '#89b4cf', '#ecd09b'],
+  snow:  ['#355b8a', '#8aaec9', '#d5e4f0'],
+  swamp: ['#1b3332', '#395a50', '#70846f'],
+  rough: ['#3d4a66', '#838391', '#c9b89c'],
+  ash:   ['#0b0714', '#271333', '#522238'],
+};
 
 export class BattleView {
   constructor(battle, setup, overlay, callbacks) {
@@ -56,7 +67,7 @@ export class BattleView {
     this.attackFromHex = null;
     this.spellMode = null;          // spellId when player is targeting a spell
     this.resurrectMode = false;     // archangel resurrect targeting
-    this.speedMult = 1;             // 1 normal, 1.8 fast
+    this.speedMult = 1;             // 1 normal, 1.9 fast, 3.0 ultra
 
     this.buildArena();
     this.buildGrid();
@@ -74,10 +85,33 @@ export class BattleView {
   buildArena() {
     const tKey = this.battle.terrain || 'grass';
     const T = TERRAINS[tKey] || TERRAINS.grass;
-    const skyCol =
-      tKey === 'ash' ? '#1c1226' : tKey === 'snow' ? '#aec6de' : tKey === 'sand' ? '#d4b278' : '#4a76a8';
-    this.scene.background = new THREE.Color(skyCol);
-    this.scene.fog = new THREE.Fog(skyCol, 28, 72);
+    const skyCols = ARENA_SKIES[tKey] || ARENA_SKIES.grass;
+    this.scene.background = new THREE.Color(skyCols[1]);
+    this.scene.fog = new THREE.Fog(skyCols[2], 32, 82);
+
+    // Painted 3D horizon sky dome
+    const skyGeo = new THREE.SphereGeometry(76, 28, 16);
+    const skyPos = skyGeo.attributes.position;
+    const skyVertCols = new Float32Array(skyPos.count * 3);
+    const cTop = new THREE.Color(skyCols[0]);
+    const cMid = new THREE.Color(skyCols[1]);
+    const cHor = new THREE.Color(skyCols[2]);
+    const cTmp = new THREE.Color();
+    for (let i = 0; i < skyPos.count; i++) {
+      const y = Math.max(0, Math.min(1, (skyPos.getY(i) + 6) / 62));
+      if (y < 0.35) cTmp.lerpColors(cHor, cMid, y / 0.35);
+      else cTmp.lerpColors(cMid, cTop, (y - 0.35) / 0.65);
+      skyVertCols[i * 3] = cTmp.r;
+      skyVertCols[i * 3 + 1] = cTmp.g;
+      skyVertCols[i * 3 + 2] = cTmp.b;
+    }
+    skyGeo.setAttribute('color', new THREE.BufferAttribute(skyVertCols, 3));
+    const skyDome = new THREE.Mesh(
+      skyGeo,
+      new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, depthWrite: false, fog: false }),
+    );
+    skyDome.renderOrder = -10;
+    this.scene.add(skyDome);
 
     const hemi = new THREE.HemisphereLight('#e6f2ff', '#4c3d28', 0.85);
     this.scene.add(hemi);
@@ -162,7 +196,7 @@ export class BattleView {
     this.scene.add(ground);
     this.ground = ground;
 
-    // Perimeter scenery (2 rings of mountains, trees, crags, and wildflowers)
+    // Lush Perimeter Scenery (dense trees, crags, outer mountain peaks & wildflower tufts)
     const decMat = getDecorationMaterial();
     const propKinds = T.obstacles.length ? T.obstacles : ['rock'];
     const decorKinds = T.decor?.length ? T.decor : ['bush'];
@@ -179,23 +213,23 @@ export class BattleView {
         this.scene.add(m);
       } catch {}
     };
-    for (let i = 0; i < 36; i++) {
-      const a = (i / 36) * Math.PI * 2;
-      const rx = 15.8 + (i % 3) * 1.6;
-      const rz = 10.2 + (i % 2) * 1.4;
+    for (let i = 0; i < 54; i++) {
+      const a = (i / 54) * Math.PI * 2;
+      const rx = 15.2 + (i % 4) * 1.45;
+      const rz = 9.8 + (i % 3) * 1.35;
       const x = Math.cos(a) * rx, z = Math.sin(a) * rz;
-      if (z > 8.2) continue; // keep front camera view clear
-      if (i % 4 === 0) {
-        placeDec(mtnKind, x * 1.16, z * 1.14, 1.55 + (i % 3) * 0.35, i * 1.1);
+      if (z > 8.4) continue; // keep front camera view clear
+      if (i % 3 === 0) {
+        placeDec(mtnKind, x * 1.18, z * 1.16 - 1.2, 1.85 + (i % 3) * 0.45, i * 1.1);
       } else {
-        placeDec(propKinds[i % propKinds.length], x, z, 0.95 + (i % 3) * 0.28, i * 1.7);
+        placeDec(propKinds[i % propKinds.length], x, z, 1.05 + (i % 3) * 0.34, i * 1.7);
       }
       if (i % 2 === 0) {
         placeDec(
           decorKinds[i % decorKinds.length],
-          x * 0.9,
-          z * 0.9,
-          0.75 + (i % 3) * 0.2,
+          x * 0.89,
+          z * 0.89,
+          0.8 + (i % 3) * 0.24,
           i * 2.3,
         );
       }
@@ -377,6 +411,52 @@ export class BattleView {
     this.approachRing.position.y = 0.045;
     this.approachRing.visible = false;
     this.scene.add(this.approachRing);
+
+    // 3D movement / flight path preview markers
+    this.pathPreviewGroup = new THREE.Group();
+    this.scene.add(this.pathPreviewGroup);
+  }
+
+  updatePathPreview(active, destHex, isAttack = false) {
+    if (!this.pathPreviewGroup) return;
+    while (this.pathPreviewGroup.children.length) {
+      const ch = this.pathPreviewGroup.children[0];
+      this.pathPreviewGroup.remove(ch);
+      ch.geometry?.dispose?.();
+      ch.material?.dispose?.();
+    }
+    if (!active || !destHex || (destHex.x === active.x && destHex.y === active.y)) return;
+    const isFly = this.battle.isFlyer(active);
+    const col = isAttack ? '#ff7a52' : '#7ef5a2';
+    const dotMat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.88, depthWrite: false });
+    if (isFly) {
+      const a = hexToWorld(active.x, active.y), b = hexToWorld(destHex.x, destHex.y);
+      const steps = Math.max(5, Math.ceil(a.distanceTo(b) * 1.4));
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const p = new THREE.Vector3().lerpVectors(a, b, t);
+        p.y = 0.08 + Math.sin(t * Math.PI) * 0.9;
+        const m = new THREE.Mesh(new THREE.SphereGeometry(i === steps ? 0.11 : 0.075, 8, 6), dotMat);
+        m.position.copy(p);
+        this.pathPreviewGroup.add(m);
+      }
+    } else {
+      const path = this.battle.pathTo(active, destHex.x, destHex.y);
+      if (!path?.length) return;
+      const pts = [hexToWorld(active.x, active.y), ...path.map((h) => hexToWorld(h.x, h.y))];
+      for (let i = 1; i < pts.length; i++) {
+        const p = pts[i];
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.03, 10), dotMat);
+        m.position.set(p.x, 0.05, p.z);
+        this.pathPreviewGroup.add(m);
+      }
+      const linePts = pts.map((p) => new THREE.Vector3(p.x, 0.055, p.z));
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(linePts),
+        new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.78 }),
+      );
+      this.pathPreviewGroup.add(line);
+    }
   }
 
   buildObstacles() {
@@ -548,6 +628,14 @@ export class BattleView {
 
   // ===================================================================== units & badges
   buildUnits() {
+    const shGeo = new THREE.PlaneGeometry(1, 1);
+    shGeo.rotateX(-Math.PI / 2);
+    const shMat = new THREE.MeshBasicMaterial({
+      map: contactShadowTexture(),
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.68,
+    });
     for (const u of this.battle.units) {
       const wrap = new THREE.Group();
       const model = createCreatureModel(u.type);
@@ -556,6 +644,11 @@ export class BattleView {
       model.scale.setScalar(sc);
       model.rotation.y = u.side === 0 ? 0 : Math.PI;
       wrap.add(model);
+      const sh = new THREE.Mesh(shGeo, shMat);
+      sh.scale.set(tier >= 6 ? 1.42 : 1.12, 1, tier >= 6 ? 1.42 : 1.12);
+      sh.position.y = 0.028;
+      sh.renderOrder = 1;
+      wrap.add(sh);
       wrap.userData.model = model;
       wrap.userData.animator = model.userData.animator;
       wrap.userData.unit = u;
@@ -582,7 +675,7 @@ export class BattleView {
     badge.style.display = 'flex';
     const effs = u.effects
       .map((e) => {
-        const good = ['bless', 'stoneSkin', 'haste', 'bloodlust', 'prayer'].includes(e.id);
+        const good = ['bless', 'stoneSkin', 'shield', 'haste', 'bloodlust', 'prayer'].includes(e.id);
         return `<span class="eff-dot ${good ? 'good' : 'bad'}" title="${EFFECT_NAMES[e.id] || e.id} (${e.rounds})"></span>`;
       })
       .join('');
@@ -599,6 +692,13 @@ export class BattleView {
     const active = b.active;
     const humanTurn = active && !b.sides[active.side].ai && !b.result && !this.playing;
     const reach = humanTurn ? b.reachable(active) : new Map();
+
+    // Compute live AOE spell affected hexes when hovering in spell mode
+    const aoeSet = new Set();
+    if (this.spellMode && humanTurn && this.hoveredHex) {
+      const aff = b.spellAffectedHexes(active.side, this.spellMode, this.hoveredHex.x, this.hoveredHex.y);
+      for (const h of aff) aoeSet.add(key(h.x, h.y));
+    }
 
     for (const [id, wrap] of this.unitGroups) {
       wrap.userData.animator?.setHighlight?.(active && active.id === id && !active.dead);
@@ -620,13 +720,21 @@ export class BattleView {
         const u = b.unitAt(c, r);
         const isObs = b.obstacles.has(k);
 
-        let col = '#000000', op = 0.05, bCol = '#d8c488', bOp = 0.22;
+        let col = '#000000', op = 0.03, bCol = '#d8c488', bOp = 0.13;
         if (isObs) {
           op = 0.0;
-          bOp = 0.06;
+          bOp = 0.04;
         } else if (this.spellMode && humanTurn) {
           const valid = b.spellTargetValid(active.side, this.spellMode, c, r);
-          if (valid) { col = '#b366ff'; op = 0.36; bCol = '#e5b8ff'; bOp = 0.72; }
+          if (aoeSet.has(k)) {
+            const friendlyDanger = u && u.side === active.side && SPELLS[this.spellMode].kind === 'damage';
+            col = friendlyDanger ? '#ff3a28' : '#e080ff';
+            op = 0.50;
+            bCol = friendlyDanger ? '#ff9988' : '#ffffff';
+            bOp = 0.95;
+          } else if (valid) {
+            col = '#9d55e8'; op = 0.24; bCol = '#dcb4ff'; bOp = 0.58;
+          }
         } else if (this.resurrectMode && humanTurn) {
           const corpse = b.corpseAt(c, r) || u;
           if (
@@ -639,19 +747,19 @@ export class BattleView {
           }
         } else if (humanTurn) {
           if (c === active.x && r === active.y) {
-            col = '#ffd84a'; op = 0.4; bCol = '#ffe87a'; bOp = 0.9;
+            col = '#ffd84a'; op = 0.36; bCol = '#ffe87a'; bOp = 0.9;
           } else if (u && u.side !== active.side) {
             const canShoot = b.canShoot(active);
             const canMelee = b.attackHexes(active, u, reach).length > 0;
             if (canShoot || canMelee) {
-              col = '#e03a2f'; op = 0.36; bCol = '#ff8070'; bOp = 0.8;
+              col = '#e03a2f'; op = 0.34; bCol = '#ff8070'; bOp = 0.82;
             }
           } else if (reach.has(k)) {
-            col = '#38b858'; op = 0.24; bCol = '#7ae894'; bOp = 0.54;
+            col = '#38b858'; op = 0.20; bCol = '#7ae894'; bOp = 0.46;
           }
         }
 
-        if (this.hoveredHex && this.hoveredHex.x === c && this.hoveredHex.y === r && !isObs) {
+        if (this.hoveredHex && this.hoveredHex.x === c && this.hoveredHex.y === r && !isObs && !aoeSet.has(k)) {
           op = Math.min(0.62, op + 0.18);
           bOp = 0.92;
         }
@@ -695,6 +803,7 @@ export class BattleView {
       this.hoveredHex = hit ? { x: hit.x, y: hit.y } : null;
       this.attackFromHex = null;
       this.approachRing.visible = false;
+      this.updatePathPreview(null, null);
 
       const b = this.battle;
       const active = b.active;
@@ -705,8 +814,9 @@ export class BattleView {
           if (b.canShoot(active)) {
             const far = hexDist(active, target) > 10;
             const est = b.estimate(active, target, { ranged: true, far });
+            const dbl = b.def(active).abilities.doubleShot && active.shots >= 2 ? ' (×2 יריות)' : '';
             this.cb.onPreview?.(
-              `ירי על ${b.name(target, 2)}${far ? ' (טווח רחוק - חצי נזק)' : ''}: ${est.lo}–${est.hi} נזק (${est.killsLo}–${est.killsHi} הרוגים)`,
+              `ירי על ${b.name(target, 2)}${far ? ' [טווח רחוק - חצי נזק]' : ''}${dbl}: ${est.lo}–${est.hi} נזק (${est.killsLo}–${est.killsHi} הרוגים)`,
             );
           } else {
             const hexes = b.attackHexes(active, target);
@@ -721,32 +831,56 @@ export class BattleView {
               const apPos = hexToWorld(chosen.x, chosen.y);
               this.approachRing.position.set(apPos.x, 0.045, apPos.z);
               this.approachRing.visible = true;
+              this.updatePathPreview(active, chosen, true);
               const est = b.estimate(active, target, {
                 moved: chosen.dist,
                 meleeShooter: !!b.def(active).abilities.shots,
               });
+              const willRetal = !b.def(active).abilities.noRetaliation && target.retaliations > 0 && !b.hasEffect(target, 'blind');
+              const retalStr = willRetal ? ' • ⚔️ האויב יגיב' : ' • ✓ ללא תגובת אויב';
+              const joustStr = b.def(active).abilities.jousting && !b.def(target).abilities.antiCavalry && chosen.dist > 0
+                ? ` • +${chosen.dist * 5}% דהירה`
+                : '';
+              const dblStr = b.def(active).abilities.doubleAttack ? ' (×2 מכות)' : '';
               this.cb.onPreview?.(
-                `תקיפת ${b.name(target, 2)}: ${est.lo}–${est.hi} נזק (${est.killsLo}–${est.killsHi} הרוגים)`,
+                `תקיפת ${b.name(target, 2)}${dblStr}: ${est.lo}–${est.hi} נזק (${est.killsLo}–${est.killsHi} הרוגים)${joustStr}${retalStr}`,
               );
             } else {
               this.cb.onPreview?.(`${b.name(target, 2)} (${target.count}) — מחוץ לטווח תנועה`);
             }
           }
         } else if (target) {
+          const effNames = target.effects.map((ef) => `${EFFECT_NAMES[ef.id] || ef.id}(${ef.rounds})`).join(', ');
           this.cb.onPreview?.(
-            `${b.name(target, 2)} (${target.count}) — נק"פ ליחידה: ${target.hpLeft}/${b.unitHp(target)}`,
+            `${b.name(target, 2)} (${target.count}) — נק"פ: ${target.hpLeft}/${b.unitHp(target)} • תגובות: ${target.retaliations > 99 ? '∞' : target.retaliations}${effNames ? ` • ${effNames}` : ''}`,
           );
+        } else if (b.reachable(active).has(key(hit.x, hit.y))) {
+          this.updatePathPreview(active, hit, false);
+          this.cb.onPreview?.(`תנועה למשבצת (${hit.x + 1}, ${hit.y + 1})`);
         } else {
           this.cb.onPreview?.('');
         }
       } else if (hit && this.spellMode && humanTurn) {
         const sp = SPELLS[this.spellMode];
-        const valid = b.spellTargetValid(active.side, this.spellMode, hit.x, hit.y);
-        this.cb.onPreview?.(
-          valid
-            ? `הטלת "${sp.name}" כאן (לחץ לאישור, קליק ימני לביטול)`
-            : `מטרה לא חוקית ללחש "${sp.name}"`,
-        );
+        const prev = b.spellPreview(active.side, this.spellMode, hit.x, hit.y);
+        if (prev) {
+          if (prev.kind === 'damage') {
+            const ff = prev.friendlyHits ? ' • ⚠ פוגע בכוחותיך!' : '';
+            this.cb.onPreview?.(
+              `"${sp.name}": ${prev.count} יחידות ייפגעו • ${prev.totalDmg} נזק (${prev.totalKills} הרוגים)${ff}`,
+            );
+          } else if (prev.kind === 'resurrect') {
+            this.cb.onPreview?.(
+              `"${sp.name}" על ${b.name(prev.target, 2)}: יקים לתחייה ${prev.revived} יצורים (${prev.healAmt} נק"פ)`,
+            );
+          } else if (prev.kind === 'heal') {
+            this.cb.onPreview?.(`"${sp.name}" על ${b.name(prev.target, 2)}: ריפוי ${prev.healAmt} נק"פ והסרת קללות`);
+          } else {
+            this.cb.onPreview?.(`הטלת "${sp.name}" (${EFFECT_NAMES[prev.effect] || sp.name}, ${prev.rounds} סבבים)`);
+          }
+        } else {
+          this.cb.onPreview?.(`מטרה לא חוקית ללחש "${sp.name}" (קליק ימני / Esc לביטול)`);
+        }
       }
       this.refreshHighlights();
     };
@@ -789,6 +923,7 @@ export class BattleView {
   async playEvents(events) {
     this.playing = true;
     this.approachRing.visible = false;
+    this.updatePathPreview(null, null);
     this.refreshHighlights();
     for (const ev of events) {
       if (ev.msg) this.cb.onLog?.(ev.msg);
@@ -905,10 +1040,12 @@ export class BattleView {
 
     if (ev.lucky) {
       this.spawnBurst(aPos, '#ffe46a', 18);
+      this.spawnShockwave(aPos, '#ffe46a', 1.45);
       this.floatOnUnit(ev.unit, 'מזל!', '#ffe46a');
     }
     if (ev.deathBlow) {
-      this.spawnBurst(dPos, '#ff2222', 20);
+      this.spawnBurst(dPos, '#ff2222', 22);
+      this.spawnShockwave(dPos, '#ff3322', 1.75);
       this.floatOnUnit(ev.unit, 'מכת מוות!', '#ff4444');
     }
 
@@ -922,6 +1059,7 @@ export class BattleView {
     defWrap.userData.animator?.play?.('hit');
     this.flashVfxLight(dPos, '#ff7733', 2.8, 0.24);
     this.spawnBurst(dPos.clone().add(new THREE.Vector3(0, 0.55, 0)), '#ff5533', 14);
+    if (ev.kills > 0 || ev.lucky || ev.deathBlow) this.spawnShockwave(dPos, ev.deathBlow ? '#ff3322' : '#ff9944', 1.25);
     this.floatOnUnit(ev.target, `-${ev.dmg}${ev.kills ? ` (${ev.kills}☠)` : ''}`, '#ff6655');
     if (ev.kills > 0 || ev.dmg > 40) this.shakeAmt = Math.min(0.28, 0.08 + ev.dmg * 0.0015);
     this.updateUnitBadge(ev.target);
@@ -938,7 +1076,10 @@ export class BattleView {
     const aPos = attWrap.position, dPos = defWrap.position;
     attM.rotation.y = Math.atan2(-(dPos.z - aPos.z), dPos.x - aPos.x);
 
-    if (ev.lucky) this.floatOnUnit(ev.unit, 'מזל!', '#ffe46a');
+    if (ev.lucky) {
+      this.spawnShockwave(aPos, '#ffe46a', 1.3);
+      this.floatOnUnit(ev.unit, 'מזל!', '#ffe46a');
+    }
     audio.play('arrow');
     const anim = attWrap.userData.animator;
     anim?.play?.('shoot');
@@ -954,6 +1095,7 @@ export class BattleView {
     const hitCol = ev.projectile === 'skull' ? '#7dff6a' : ev.projectile === 'holy' ? '#ffe87a' : '#ff6644';
     this.flashVfxLight(dPos, hitCol, 2.5, 0.22);
     this.spawnBurst(end, hitCol, 14);
+    if (ev.projectile === 'skull' || ev.projectile === 'holy') this.spawnShockwave(dPos, hitCol, 1.35);
     this.floatOnUnit(ev.target, `-${ev.dmg}${ev.kills ? ` (${ev.kills}☠)` : ''}`, '#ff6655');
     this.updateUnitBadge(ev.target);
     await wait(160 / spd);
@@ -978,7 +1120,9 @@ export class BattleView {
     for (const h of ev.hits) {
       const w = this.unitGroups.get(h.unit.id);
       if (!w) continue;
-      this.spawnBurst(w.position.clone().add(new THREE.Vector3(0, 0.5, 0)), ev.kind === 'cloud' ? '#66ff66' : '#ff6622', 16);
+      const col = ev.kind === 'cloud' ? '#66ff66' : '#ff6622';
+      this.spawnBurst(w.position.clone().add(new THREE.Vector3(0, 0.5, 0)), col, 16);
+      this.spawnShockwave(w.position, col, 1.35);
       w.userData.animator?.flash?.('#ff4422', 0.3);
       this.floatOnUnit(h.unit, `-${h.dmg}${h.kills ? ` (${h.kills}☠)` : ''}`, '#ff7744');
       this.updateUnitBadge(h.unit);
@@ -993,35 +1137,73 @@ export class BattleView {
     const center = hexToWorld(ev.x, ev.y);
     const col = sp.color || '#b48cff';
 
-    if (sp.vfx === 'lightning' || sp.vfx === 'chain') {
+    if (sp.vfx === 'lightning') {
       audio.play('lightning');
       for (const h of ev.hits) {
         const p = hexToWorld(h.unit.x, h.unit.y);
-        this.spawnLightningBolt(p.clone().add(new THREE.Vector3(0, 9, 0)), p.clone().add(new THREE.Vector3(0, 0.4, 0)), col);
+        this.spawnLightningBolt(p.clone().add(new THREE.Vector3(0, 9.5, 0)), p.clone().add(new THREE.Vector3(0, 0.4, 0)), col);
+        this.spawnShockwave(p, col, 1.6);
       }
       this.flashVfxLight(center, '#aaddff', 4.5, 0.32);
       this.shakeAmt = 0.22;
       await wait(320 / spd);
-    } else if (sp.vfx === 'fireball' || sp.vfx === 'meteor' || sp.vfx === 'armageddon') {
-      audio.play(sp.vfx === 'meteor' ? 'meteor' : 'fire');
+    } else if (sp.vfx === 'chain') {
+      audio.play('lightning');
+      let prevPos = null;
+      for (let i = 0; i < ev.hits.length; i++) {
+        const p = hexToWorld(ev.hits[i].unit.x, ev.hits[i].unit.y);
+        const start = prevPos ? prevPos.clone().add(new THREE.Vector3(0, 0.9, 0)) : p.clone().add(new THREE.Vector3(0, 9.5, 0));
+        this.spawnLightningBolt(start, p.clone().add(new THREE.Vector3(0, 0.7, 0)), col);
+        this.spawnShockwave(p, col, 1.45 - i * 0.18);
+        this.flashVfxLight(p, '#aaddff', 4.2, 0.26);
+        prevPos = p;
+        await wait(115 / spd);
+      }
+      this.shakeAmt = 0.25;
+      await wait(220 / spd);
+    } else if (sp.vfx === 'meteor') {
+      audio.play('meteor');
+      const offsets = [[0, 0], [-0.9, -0.6], [0.95, 0.5], [-0.3, 0.9]];
+      await Promise.all(
+        offsets.map(async ([ox, oz], idx) => {
+          await wait((idx * 65) / spd);
+          const dst = center.clone().add(new THREE.Vector3(ox, 0.25, oz));
+          const src = dst.clone().add(new THREE.Vector3(-3.2, 8.8, -2.2));
+          await this.flyProjectile('fireball', src, dst, spd);
+          this.spawnExplosion(dst, col, idx === 0 ? 2.4 : 1.5);
+          this.spawnShockwave(dst, '#ff8828', idx === 0 ? 2.6 : 1.6);
+        }),
+      );
+      this.flashVfxLight(center, '#ff7722', 5.2, 0.42);
+      this.shakeAmt = 0.30;
+      await wait(260 / spd);
+    } else if (sp.vfx === 'fireball' || sp.vfx === 'armageddon') {
+      audio.play('fire');
       const targets = sp.vfx === 'armageddon' ? this.battle.alive().map((u) => hexToWorld(u.x, u.y)) : [center];
       await Promise.all(targets.map((t) => this.flyProjectile('fireball', t.clone().add(new THREE.Vector3(-3, 8, -2)), t.clone().add(new THREE.Vector3(0, 0.3, 0)), spd)));
-      for (const t of targets) this.spawnExplosion(t, col, sp.vfx === 'armageddon' ? 2.4 : 2.1);
+      for (const t of targets) {
+        this.spawnExplosion(t, col, sp.vfx === 'armageddon' ? 2.4 : 2.1);
+        this.spawnShockwave(t, col, 2.3);
+      }
       this.flashVfxLight(center, '#ff7722', 5.0, 0.38);
       this.shakeAmt = 0.28;
       await wait(340 / spd);
     } else if (sp.vfx === 'frost') {
       audio.play('frost');
+      this.spawnShockwave(center, '#9ad8ff', 2.4);
       for (const nb of neighbors(ev.x, ev.y)) {
-        this.spawnBurst(hexToWorld(nb.x, nb.y).add(new THREE.Vector3(0, 0.3, 0)), '#9ad8ff', 14);
+        const np = hexToWorld(nb.x, nb.y);
+        this.spawnIceSpike(np);
+        this.spawnBurst(np.clone().add(new THREE.Vector3(0, 0.3, 0)), '#9ad8ff', 10);
       }
-      this.flashVfxLight(center, '#88d8ff', 3.5, 0.3);
-      await wait(340 / spd);
+      this.flashVfxLight(center, '#88d8ff', 3.5, 0.32);
+      await wait(360 / spd);
     } else if (sp.vfx === 'implosion') {
       audio.play('spell');
-      this.spawnExplosion(center.clone().add(new THREE.Vector3(0, 0.6, 0)), '#c070ff', 1.8);
+      this.spawnExplosion(center.clone().add(new THREE.Vector3(0, 0.6, 0)), '#c070ff', 1.9);
+      this.spawnShockwave(center, '#c070ff', 2.0);
       this.flashVfxLight(center, '#c070ff', 4.2, 0.35);
-      this.shakeAmt = 0.25;
+      this.shakeAmt = 0.26;
       await wait(350 / spd);
     } else if (sp.vfx === 'arrow') {
       audio.play('magicArrow');
@@ -1029,11 +1211,13 @@ export class BattleView {
       await this.flyProjectile('magic', from, center.clone().add(new THREE.Vector3(0, 0.6, 0)), spd);
       this.flashVfxLight(center, col, 3.0, 0.25);
       this.spawnBurst(center.clone().add(new THREE.Vector3(0, 0.6, 0)), col, 16);
+      this.spawnShockwave(center, col, 1.3);
     } else {
       audio.play(sp.kind === 'heal' || sp.kind === 'resurrect' ? 'heal' : sp.kind === 'buff' ? 'buff' : 'debuff');
       for (const h of ev.hits) {
         const p = hexToWorld(h.unit.x, h.unit.y);
         this.spawnPillar(p, col);
+        this.spawnShockwave(p, col, 1.45);
       }
       this.flashVfxLight(center, col, 3.2, 0.35);
       await wait(360 / spd);
@@ -1047,7 +1231,7 @@ export class BattleView {
         this.floatOnUnit(h.unit, `-${h.dmg}${h.kills ? ` (${h.kills}☠)` : ''}`, '#ff6655');
       } else if (h.revived) {
         w?.userData.animator?.play?.('revive');
-        this.floatOnUnit(h.unit, `+${h.revived} קמו לתחייה!`, '#ffe97a');
+        this.floatOnUnit(h.unit, `+${h.revived} קמו לתחייה!`, sp.undeadOnly ? '#66ff9e' : '#ffe97a');
       } else if (h.healed) {
         this.floatOnUnit(h.unit, `+${h.healed} נק"פ`, '#7dffb0');
       } else if (h.effect) {
@@ -1072,6 +1256,7 @@ export class BattleView {
     audio.play('heal');
     const p = hexToWorld(ev.target.x, ev.target.y);
     this.spawnPillar(p, '#ffe97a');
+    this.spawnShockwave(p, '#ffe97a', 1.8);
     this.flashVfxLight(p, '#ffe97a', 3.5, 0.4);
     const w = this.unitGroups.get(ev.target.id);
     w?.userData.animator?.play?.('revive');
@@ -1081,6 +1266,55 @@ export class BattleView {
   }
 
   // ===================================================================== 3D projectiles & VFX
+  spawnShockwave(pos, color, maxRadius = 1.6) {
+    const geo = new THREE.RingGeometry(0.18, 0.34, 24);
+    geo.rotateX(-Math.PI / 2);
+    const mat = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(geo, mat);
+    ring.position.set(pos.x, 0.06, pos.z);
+    this.scene.add(ring);
+    tween(0.36, (t) => {
+      ring.scale.setScalar(0.5 + t * maxRadius * 2.4);
+      mat.opacity = (1 - t) * 0.82;
+    }).then(() => {
+      this.scene.remove(ring);
+      geo.dispose();
+      mat.dispose();
+    });
+  }
+
+  spawnIceSpike(pos) {
+    const geo = new THREE.ConeGeometry(0.24, 1.35, 5);
+    const mat = new THREE.MeshStandardMaterial({
+      color: '#b8ecff',
+      emissive: new THREE.Color('#4ab8ff'),
+      emissiveIntensity: 0.9,
+      roughness: 0.15,
+      metalness: 0.1,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const spike = new THREE.Mesh(geo, mat);
+    spike.position.set(pos.x, -0.5, pos.z);
+    spike.rotation.y = Math.random() * Math.PI;
+    this.scene.add(spike);
+    tween(0.45, (t) => {
+      const k = t < 0.35 ? ease.out(t / 0.35) : 1 - (t - 0.35) / 0.65;
+      spike.position.y = -0.5 + k * 1.15;
+      mat.opacity = Math.max(0, k * 0.92);
+    }).then(() => {
+      this.scene.remove(spike);
+      geo.dispose();
+      mat.dispose();
+    });
+  }
   async flyProjectile(kind, start, end, spd) {
     const g = new THREE.Group();
     if (kind === 'arrow') {

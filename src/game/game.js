@@ -112,6 +112,7 @@ export class Game {
       const heroes = playerHeroes(s, p.id).length, towns = playerTowns(s, p.id).length;
       if ((heroes === 0 && towns === 0) || p.daysWithoutTown >= 7) {
         p.alive = false;
+        p.fledHeroes = {};
         for (const h of playerHeroes(s, p.id)) this.killHero(h);
         for (const o of Object.values(s.objects)) if (o.owner === p.id && o.type !== 'town') o.owner = null;
         this.view?.refreshAll?.();
@@ -151,8 +152,29 @@ export class Game {
     }
     hero.equipped = {}; hero.backpack = [];
     hero.alive = false;
-    if (s.heroAt[idx(s, hero.x, hero.y)] === hero.id) s.heroAt[idx(s, hero.x, hero.y)] = null;
+    if (hero.x >= 0 && s.heroAt[idx(s, hero.x, hero.y)] === hero.id) s.heroAt[idx(s, hero.x, hero.y)] = null;
     this.view?.removeHero?.(hero.id);
+  }
+  retreatHero(hero) {
+    const s = this.state;
+    const p = s.players[hero.owner];
+    if (hero.x >= 0 && s.heroAt[idx(s, hero.x, hero.y)] === hero.id) s.heroAt[idx(s, hero.x, hero.y)] = null;
+    hero.alive = false;
+    hero.fled = true;
+    hero.x = -1;
+    hero.y = -1;
+    hero.army = emptyArmy();
+    this.view?.removeHero?.(hero.id);
+    if (p && p.alive) {
+      p.fledHeroes = p.fledHeroes || {};
+      p.fledHeroes[hero.rosterId] = hero.id;
+      // Place retreated hero at the front of their owner's tavern for immediate re-hire
+      p.tavern = [hero.rosterId, ...p.tavern.filter((r) => r !== hero.rosterId)].slice(0, 2);
+      // Ensure no other player's tavern lists this hero
+      for (const q of s.players) {
+        if (q.id !== p.id) q.tavern = q.tavern.filter((r) => r !== hero.rosterId);
+      }
+    }
   }
   removeObject(id) {
     const s = this.state;
@@ -680,12 +702,17 @@ export class Game {
     }
 
     // XP
+    const loserSide = attackerWon ? 1 : 0;
     const xpWin = summary[attackerWon ? 0 : 1].killedHp + (loserHero ? 500 : 0);
     if (loserHero) {
-      if (result.fled === (attackerWon ? 1 : 0) && loserHero) {
-        loserHero.fled = true;
+      if (result.fled === loserSide) {
+        this.retreatHero(loserHero);
+        if (this.isHuman(loserHero.owner)) {
+          this.ui.toast?.(`${loserHero.name} ${g(loserHero, 'נסוג', 'נסוגה')} לטברנה עם כל חפציו וניסיונו!`);
+        }
+      } else {
+        this.killHero(loserHero, winnerHero);
       }
-      this.killHero(loserHero, winnerHero);
     }
     if (humanInvolved) this.ui.refresh?.();
     if (raised > 0 && this.isHuman(winnerHero.owner)) {
@@ -715,7 +742,8 @@ export class Game {
         choice = roll.options.length > 1 && (w[roll.options[1].id] || 0) > (w[roll.options[0].id] || 0) ? 1 : 0;
       }
       applyLevelUp(hero, roll, choice);
-      hero.mana = Math.min(hero.mana + 0, heroMaxMana(hero));
+      const manaGain = roll.primary === 'knowledge' ? 10 : 0;
+      hero.mana = Math.min(hero.mana + manaGain, heroMaxMana(hero));
     }
     this.ui.refresh?.();
   }
@@ -730,9 +758,29 @@ export class Game {
     if (s.heroAt[idx(s, ex.x, ex.y)]) return null;
     p.resources.gold -= HERO_COST;
     p.tavern = p.tavern.filter((r) => r !== rosterId);
-    const h = createHero(s, rosterId, pid, ex.x, ex.y, { rng: this.rng });
+
+    // Restore a retreated hero with all their XP, stats, skills, spells & artifacts!
+    const fledId = p.fledHeroes?.[rosterId];
+    let h = fledId && s.heroes[fledId] && !s.heroes[fledId].alive ? s.heroes[fledId] : null;
+    if (h) {
+      delete p.fledHeroes[rosterId];
+      h.alive = true;
+      h.fled = false;
+      h.owner = pid;
+      h.x = ex.x;
+      h.y = ex.y;
+      h.sleeping = false;
+      h.army = emptyArmy();
+      const t1 = FACTION_LINEUP[h.faction]?.[0] || FACTION_LINEUP[town.faction][0];
+      armyAdd(h.army, t1, this.rng.int(4, 8));
+      h.mana = Math.max(h.mana, heroMaxMana(h));
+      h.mp = heroMaxMP(h);
+    } else {
+      h = createHero(s, rosterId, pid, ex.x, ex.y, { rng: this.rng });
+    }
+
     s.heroAt[idx(s, ex.x, ex.y)] = h.id;
-    s.usedHeroes = [...(s.usedHeroes || []), rosterId];
+    if (!(s.usedHeroes || []).includes(rosterId)) s.usedHeroes = [...(s.usedHeroes || []), rosterId];
     refreshTavern(s, pid, this.rng);
     this.revealForHero(h);
     this.view?.addHero?.(h);

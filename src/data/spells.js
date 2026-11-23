@@ -26,6 +26,10 @@ export const SPELLS = {
     name: 'עור אבן', level: 1, mana: 5, target: 'ally', kind: 'buff', vfx: 'buff', color: '#c9b48a',
     effect: 'stoneSkin', desc: () => '+3 הגנה ליחידה.',
   },
+  shield: {
+    name: 'מגן קסום', level: 1, mana: 5, target: 'ally', kind: 'buff', vfx: 'buff', color: '#6ec4ff',
+    effect: 'shield', desc: () => 'מפחית ב-25% את הנזק ממתקפות קרב צמוד.',
+  },
   haste: {
     name: 'זריזות', level: 1, mana: 6, target: 'ally', kind: 'buff', vfx: 'buff', color: '#9ef0ff',
     effect: 'haste', desc: () => '+3 מהירות ליחידה.',
@@ -62,6 +66,10 @@ export const SPELLS = {
     name: 'תפילה', level: 3, mana: 16, target: 'ally', kind: 'buff', vfx: 'buff', color: '#fff3b0',
     effect: 'prayer', desc: () => '+2 התקפה, הגנה ומהירות ליחידה.',
   },
+  animateDead: {
+    name: 'החיית מתים', level: 3, mana: 15, target: 'ally', kind: 'resurrect', undeadOnly: true, vfx: 'heal', color: '#58ff9a',
+    heal: (sp) => 30 + 30 * sp, desc: (sp) => `מקים לתחייה אל-מתים שנפלו בשווי ${30 + 30 * sp} נקודות חיים.`,
+  },
   meteorShower: {
     name: 'גשם מטאורים', level: 4, mana: 16, target: 'area', kind: 'damage', vfx: 'meteor', color: '#ff5a1f',
     dmg: (sp) => 25 + 25 * sp, desc: (sp) => `סלעים בוערים נופלים מהשמיים: ${25 + 25 * sp} נזק לאזור.`,
@@ -89,8 +97,9 @@ for (const [id, s] of Object.entries(SPELLS)) s.id = id;
 export const SPELL_LEVEL_NAMES = ['', 'דרגה 1', 'דרגה 2', 'דרגה 3', 'דרגה 4'];
 
 export const EFFECT_NAMES = {
-  bless: 'ברכה', curse: 'קללה', stoneSkin: 'עור אבן', haste: 'זריזות', slow: 'האטה', bloodlust: 'צמא דם',
-  blind: 'עיוורון', weakness: 'חולשה', prayer: 'תפילה', disease: 'מחלה', defending: 'בהגנה',
+  bless: 'ברכה', curse: 'קללה', stoneSkin: 'עור אבן', shield: 'מגן קסום', haste: 'זריזות', slow: 'האטה',
+  bloodlust: 'צמא דם', blind: 'עיוורון', weakness: 'חולשה', prayer: 'תפילה', disease: 'מחלה',
+  aging: 'הזדקנות', defending: 'בהגנה',
 };
 
 export function spellsOfLevel(level) {

@@ -121,11 +121,11 @@ class Engine {
       });
       this.composer = new EffectComposer(r, rt);
       this.renderPass = new RenderPass(new THREE.Scene(), new THREE.PerspectiveCamera());
-      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.22, 0.45, 0.88);
+      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.25, 0.48, 1.18);
       this.outputPass = new OutputPass();
       this.gradePass = new ShaderPass(FantasyGradeShader);
       this.gradePass.uniforms.uResolution.value.set(w * pr, h * pr);
-      this.gradePass.uniforms.uSharpness.value = 0.36;
+      this.gradePass.uniforms.uSharpness.value = 0.34;
 
       this.composer.addPass(this.renderPass);
       this.composer.addPass(this.bloomPass);

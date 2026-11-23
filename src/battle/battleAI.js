@@ -38,7 +38,12 @@ export function decideAction(b, u) {
   for (const e of enemies) {
     const hexes = b.attackHexes(u, e, reach);
     if (!hexes.length) continue;
-    const avg = (b.damage(u, e, { mode: 'min', moved: 0, meleeShooter: !!b.def(u).abilities.shots }) + b.damage(u, e, { mode: 'max', meleeShooter: !!b.def(u).abilities.shots })) / 2;
+    // choose hex: prefer the one with smallest distance (jousting: largest for max charge bonus)
+    let hex = hexes[0];
+    for (const hx of hexes) {
+      if (b.def(u).abilities.jousting ? hx.dist > hex.dist : hx.dist < hex.dist) hex = hx;
+    }
+    const avg = (b.damage(u, e, { mode: 'min', moved: hex.dist, meleeShooter: !!b.def(u).abilities.shots }) + b.damage(u, e, { mode: 'max', moved: hex.dist, meleeShooter: !!b.def(u).abilities.shots })) / 2;
     let s = killValue(b, e, avg) + threat(b, e) * 0.4;
     // retaliation estimate
     if (!b.def(u).abilities.noRetaliation && e.retaliations > 0) {
@@ -52,11 +57,6 @@ export function decideAction(b, u) {
       }
     }
     if (b.def(e).abilities.shots) s += 150; // love killing shooters
-    // choose hex: prefer the one with smallest distance (jousting: largest)
-    let hex = hexes[0];
-    for (const hx of hexes) {
-      if (b.def(u).abilities.jousting ? hx.dist > hex.dist : hx.dist < hex.dist) hex = hx;
-    }
     if (s > bs) { bs = s; best = { type: 'attack', target: e, x: hex.x, y: hex.y }; }
   }
   if (best) return best;
@@ -146,6 +146,7 @@ export function decideSpell(b, side) {
         let f = 0.12;
         if (sp.effect === 'bloodlust' && b.def(a).abilities.shots) f = 0.02;
         if (sp.effect === 'haste' && b.isFlyer(a)) f = 0.05;
+        if (sp.effect === 'shield') f = b.def(a).abilities.shots ? 0.04 : 0.14;
         if (sp.effect === 'prayer') f = 0.2;
         consider(a.x, a.y, v * f);
       }
@@ -163,7 +164,11 @@ export function decideSpell(b, side) {
         consider(a.x, a.y, missing * b.def(a).value / b.def(a).hp * 0.5 + (bad ? a.count * b.def(a).value * 0.08 : 0));
       }
     } else if (sp.kind === 'resurrect') {
-      for (const a of b.units.filter((u) => u.side === side && (u.dead || u.count < u.initialCount) && !b.def(u).abilities.undead)) {
+      for (const a of b.units.filter((u) => {
+        if (u.side !== side || (!u.dead && u.count >= u.initialCount)) return false;
+        const isUndead = !!b.def(u).abilities.undead;
+        return sp.undeadOnly ? isUndead : !isUndead;
+      })) {
         if (a.dead && b.unitAt(a.x, a.y)) continue;
         const lost = a.initialCount - (a.dead ? 0 : a.count);
         const can = Math.min(lost, Math.floor(sp.heal(power) / b.def(a).hp));

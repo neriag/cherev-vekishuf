@@ -259,13 +259,13 @@ const PAL = {
   purple: () => mat('#612c8f', { r: 0.74, tex: 'cloth' }),
   purpleDark: () => mat('#371a52', { r: 0.78, tex: 'cloth' }),
   rust: () => mat('#8f5c3c', { m: 0.44, r: 0.58, tex: 'bone', bs: 0.022 }),
-  glowGreen: () => mat('#9dff8c', { e: '#62ff4c', ei: 2.3 }),
-  glowRed: () => mat('#ff5a4a', { e: '#ff2a1a', ei: 2.5 }),
-  glowGold: () => mat('#ffe494', { e: '#ffc43d', ei: 1.95 }),
-  glowPurple: () => mat('#e2a8ff', { e: '#b45cff', ei: 2.3 }),
-  glowBlue: () => mat('#b6f0ff', { e: '#58c8ff', ei: 2.1 }),
-  glowYellow: () => mat('#fff27a', { e: '#ffd400', ei: 2.1 }),
-  fire: () => mat('#ffc466', { e: '#ff7a1a', ei: 2.7 }),
+  glowGreen: () => mat('#9dff8c', { e: '#4ef038', ei: 1.55 }),
+  glowRed: () => mat('#ff5a4a', { e: '#e82618', ei: 1.65 }),
+  glowGold: () => mat('#ffe494', { e: '#f0b232', ei: 1.4 }),
+  glowPurple: () => mat('#e2a8ff', { e: '#a44cf0', ei: 1.55 }),
+  glowBlue: () => mat('#b6f0ff', { e: '#48b8f0', ei: 1.45 }),
+  glowYellow: () => mat('#fff27a', { e: '#f0c418', ei: 1.45 }),
+  fire: () => mat('#ffb854', { e: '#f06a14', ei: 1.7 }),
 };
 
 // ---------------------------------------------------------------- mesh helpers
@@ -1349,7 +1349,7 @@ function angelRig(arch) {
   }
   rig.weapon = holdPivot(h, h.armR, -0.7);
   sword(rig.weapon, arch
-    ? { len: 0.54, w: 0.062, blade: PAL.fire(), fuller: PAL.glowGold(), guard: PAL.gold(), flame: mat('#ffdd66', { e: '#ff8a1a', ei: 2.5 }) }
+    ? { len: 0.54, w: 0.062, blade: PAL.fire(), fuller: PAL.glowGold(), guard: PAL.gold(), flame: mat('#ffcf55', { e: '#f07814', ei: 1.6 }) }
     : { len: 0.48, w: 0.052, blade: mat('#e8eef8', { m: 0.85, r: 0.18, tex: 'metal' }), fuller: PAL.gold(), guard: PAL.gold() });
   rig.hover = 0.12;
   rig.flapIdle = 0.22;

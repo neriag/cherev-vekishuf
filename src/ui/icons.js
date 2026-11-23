@@ -851,6 +851,26 @@ const ICON_PATHS = {
       <path d="M12 12 L23 23 M52 12 L41 23 M12 52 L23 41 M52 52 L41 41" stroke="#e6b8ff" stroke-width="3" stroke-linecap="round"/>
     </g>
   `,
+
+  shield: `
+    <g stroke="#0c243d" stroke-width="2" stroke-linejoin="round">
+      <circle cx="32" cy="32" r="25" fill="#0e2742" stroke="#6ec4ff" stroke-width="2"/>
+      <path d="M32 13 L48 19 L46 35 C45 44 38 50 32 53 C26 50 19 44 18 35 L16 19 Z" fill="#3a92e0" stroke="#c8ecff" stroke-width="2.5"/>
+      <path d="M32 18 L32 48 M21 28 L43 28" stroke="#e2f6ff" stroke-width="2.5" stroke-linecap="round"/>
+    </g>
+  `,
+
+  animateDead: `
+    <g stroke="#082414" stroke-width="2" stroke-linejoin="round">
+      <circle cx="32" cy="32" r="25" fill="#0d2618" stroke="#58ff9a" stroke-width="2"/>
+      <circle cx="32" cy="26" r="11" fill="#e6dfc8" stroke="#2d261e" stroke-width="2"/>
+      <rect x="26" y="34" width="12" height="7" rx="2" fill="#e6dfc8" stroke="#2d261e" stroke-width="1.8"/>
+      <circle cx="27.5" cy="25.5" r="2.6" fill="#44ff88" stroke="none"/>
+      <circle cx="36.5" cy="25.5" r="2.6" fill="#44ff88" stroke="none"/>
+      <path d="M15 48 C22 42 42 42 49 48" fill="none" stroke="#58ff9a" stroke-width="3" stroke-linecap="round"/>
+      <path d="M22 52 L22 44 M32 54 L32 43 M42 52 L42 44" stroke="#92ffbd" stroke-width="2.4" stroke-linecap="round"/>
+    </g>
+  `,
 };
 
 // ============================================================================

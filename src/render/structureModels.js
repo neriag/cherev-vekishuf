@@ -107,6 +107,9 @@ export function mat(color, o = {}) {
       m.normalMap = o.normalMap;
       const ns = o.normalScale ?? 0.35;
       m.normalScale = new THREE.Vector2(ns, ns);
+    } else if (o.bumpMap) {
+      m.bumpMap = o.bumpMap;
+      m.bumpScale = o.bumpScale ?? 0.028;
     } else if (!isTrans && !o.e) {
       m.bumpMap = isWood ? woodBumpTexture() : isRoof ? roofBumpTexture() : stoneBumpTexture();
       m.bumpScale = isMetal ? 0.006 : isRoof ? 0.032 : isStoneWall ? 0.028 : isWood ? 0.024 : 0.016;

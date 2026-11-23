@@ -287,6 +287,7 @@ export class Battle {
     if (!ranged && c.abilities.jousting && !this.def(def).abilities.antiCavalry) bonus += 0.05 * (opts.moved ?? att.moved);
     let total = base * mult * (1 + bonus);
     if (dh) total *= 1 - skillValue(dh, 'armorer');
+    if (!ranged && this.hasEffect(def, 'shield')) total *= 0.75;
     if (ranged && opts.far) total *= 0.5;
     if (opts.meleeShooter && !c.abilities.noMeleePenalty) total *= 0.5;
     if (opts.retaliationHalf) total *= 0.5;
@@ -590,7 +591,12 @@ export class Battle {
     const ev = [];
     if (u.resurrectUsed) return ev;
     u.resurrectUsed = true;
+    const wasDead = target.dead;
     const r = this.heal(target, 100 * u.count, true);
+    if (wasDead && !target.dead && !target.acted && !this.queue.includes(target)) {
+      this.queue.push(target);
+      this.resortQueues();
+    }
     ev.push({ t: 'resurrect', unit: u, target, revived: r.revived, msg: `${this.name(u)} מקימים לתחייה ${r.revived} ${creatureName(target.type, r.revived)}!` });
     this.finishAction(u, ev);
     return ev;
@@ -611,7 +617,9 @@ export class Battle {
     if (sp.target === 'area' || sp.target === 'ring') return inField(x, y);
     if (sp.kind === 'resurrect') {
       const t = u || this.corpseAt(x, y);
-      return !!t && t.side === side && (t.dead || t.count < t.initialCount) && !this.def(t).abilities.undead;
+      if (!t || t.side !== side || (!t.dead && t.count >= t.initialCount)) return false;
+      const isUndead = !!this.def(t).abilities.undead;
+      return sp.undeadOnly ? isUndead : !isUndead;
     }
     if (!u) return false;
     if (sp.target === 'enemy' && u.side === side) return false;
@@ -619,12 +627,76 @@ export class Battle {
     if (sp.mind && (this.def(u).abilities.undead || this.def(u).abilities.mindImmune)) return false;
     return true;
   }
+  /** List of hexes affected if casting spellId at (x, y) — used for live 3D AOE preview. */
+  spellAffectedHexes(side, spellId, x, y) {
+    const sp = SPELLS[spellId];
+    if (!sp || !inField(x, y)) return [];
+    if (sp.target === 'area') return [{ x, y }, ...neighbors(x, y)];
+    if (sp.target === 'ring') return neighbors(x, y);
+    if (sp.target === 'all') return this.alive().map((u) => ({ x: u.x, y: u.y }));
+    if (spellId === 'chainLightning') {
+      const first = this.unitAt(x, y);
+      if (!first || first.side === side) return [];
+      const out = [];
+      const hitSet = new Set();
+      let cur = first;
+      for (let k = 0; k < 4 && cur; k++) {
+        hitSet.add(cur);
+        out.push({ x: cur.x, y: cur.y });
+        const prev = cur;
+        cur = this.alive().filter((v) => !hitSet.has(v)).sort((a, b) => hexDist(prev, a) - hexDist(prev, b))[0];
+      }
+      return out;
+    }
+    return this.spellTargetValid(side, spellId, x, y) ? [{ x, y }] : [];
+  }
+  /** Estimate damage/kills or heal/revive for UI hover preview without mutating battle state. */
+  spellPreview(side, spellId, x, y) {
+    const sp = SPELLS[spellId];
+    const hero = this.sides[side]?.hero;
+    if (!sp || !hero || !this.spellTargetValid(side, spellId, x, y)) return null;
+    const power = heroStat(hero, 'power');
+    if (sp.kind === 'damage') {
+      const hexes = this.spellAffectedHexes(side, spellId, x, y);
+      let victims = hexes.map((h) => this.unitAt(h.x, h.y)).filter(Boolean);
+      let totalDmg = 0, totalKills = 0, friendlyHits = 0;
+      let base = sp.dmg(power);
+      for (let k = 0; k < victims.length; k++) {
+        const v = victims[k];
+        const d = this.spellDamageTo(side, sp, v, spellId === 'chainLightning' ? base / Math.pow(2, k) : base);
+        totalDmg += d;
+        totalKills += this.killsFor(v, d);
+        if (v.side === side) friendlyHits++;
+      }
+      return { kind: 'damage', count: victims.length, totalDmg, totalKills, friendlyHits };
+    }
+    if (sp.kind === 'resurrect') {
+      const t = this.unitAt(x, y) || this.corpseAt(x, y);
+      if (!t) return null;
+      const healAmt = sp.heal(power);
+      const hp = this.unitHp(t);
+      const lost = t.initialCount - (t.dead ? 0 : t.count);
+      const before = t.dead ? 0 : this.totalHp(t);
+      const after = Math.min(t.initialCount * hp, before + healAmt);
+      const revived = Math.max(0, Math.ceil(after / hp) - (t.dead ? 0 : t.count));
+      return { kind: 'resurrect', target: t, healAmt, revived: Math.min(lost, revived) };
+    }
+    if (sp.kind === 'heal') {
+      const t = this.unitAt(x, y);
+      return t ? { kind: 'heal', target: t, healAmt: sp.heal(power) } : null;
+    }
+    return { kind: sp.kind, effect: sp.effect, rounds: spellDuration(power) };
+  }
   spellDamageTo(side, sp, u, base) {
     const hero = this.sides[side].hero;
     let d = base * (1 + skillValue(hero, 'sorcery'));
     const mr = this.def(u).abilities.magicResist || 0;
     d *= 1 - mr;
     return Math.max(1, Math.round(d));
+  }
+  resortQueues() {
+    this.queue.sort((a, b) => this.speedOf(b) - this.speedOf(a) || a.side - b.side || a.slot - b.slot);
+    this.waitQueue.sort((a, b) => this.speedOf(a) - this.speedOf(b));
   }
   castSpell(side, spellId, x, y) {
     const ev = [];
@@ -674,10 +746,16 @@ export class Battle {
         const r = this.heal(v, sp.heal(power), false);
         hits.push({ unit: v, healed: r.healed });
       }
+      this.resortQueues();
       msg += ` על ${victims.map((v) => this.name(v, 2)).join(', ')}.`;
     } else if (sp.kind === 'resurrect') {
       for (const v of victims) {
+        const wasDead = v.dead;
         const r = this.heal(v, sp.heal(power), true);
+        if (wasDead && !v.dead && !v.acted && !this.queue.includes(v)) {
+          this.queue.push(v);
+          this.resortQueues();
+        }
         hits.push({ unit: v, healed: r.healed, revived: r.revived });
         msg += ` ו${hero.gender === 'f' ? 'מקימה' : 'מקים'} ${r.revived} ${creatureName(v.type, r.revived)} לתחייה.`;
       }
@@ -690,6 +768,7 @@ export class Battle {
         v.effects.push({ id: sp.effect, rounds: dur });
         hits.push({ unit: v, effect: sp.effect });
       }
+      if (['haste', 'slow', 'prayer'].includes(sp.effect)) this.resortQueues();
       msg += ` על ${victims.map((v) => this.name(v, 2)).join(', ')} (${EFFECT_NAMES[sp.effect]}, ${dur} סבבים).`;
     }
     ev.push({ t: 'spell', side, spell: spellId, x, y, hits, msg });

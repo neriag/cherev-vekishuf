@@ -4,7 +4,15 @@
 import * as THREE from 'three';
 import { tween, ease } from './engine.js';
 import { fogUniforms, patchFog, patchObjectFog } from './fog.js';
-import { grainTexture, terrainNormalTexture, roadTexture, waterNormalTexture, glowTexture } from './textures.js';
+import {
+  grainTexture,
+  terrainNormalTexture,
+  roadTexture,
+  cobblestoneBumpTexture,
+  waterNormalTexture,
+  glowTexture,
+  contactShadowTexture,
+} from './textures.js';
 import { TERRAINS } from '../data/terrain.js';
 import { CREATURES } from '../data/creatures.js';
 import { createMapObjectModel, createTownMapModel, getDecorationGeometry, getDecorationMaterial } from './structureModels.js';
@@ -375,51 +383,97 @@ export class AdventureView {
     const M = this.state.map, { w, h } = M;
     const pos = [], uvs = [], idxs = [];
     const isRoad = (x, y) => x >= 0 && y >= 0 && x < w && y < h && M.road[y * w + x];
-    const W2 = 0.22;
-    const pushStrip = (ax, az, bx, bz) => {
-      const len = Math.hypot(bx - ax, bz - az);
-      const segs = Math.max(3, Math.ceil(len / 0.16));
-      const dx = (bx - ax) / len, dz = (bz - az) / len;
-      const nx = -dz * W2, nz = dx * W2;
+    const W2 = 0.23;
+
+    const pushRibbon = (pts) => {
+      if (pts.length < 2) return;
       const base = pos.length / 3;
-      for (let s = 0; s <= segs; s++) {
-        const t = s / segs;
-        const px = ax + (bx - ax) * t, pz = az + (bz - az) * t;
+      let dist = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const [px, pz] = pts[i];
+        if (i > 0) dist += Math.hypot(px - pts[i - 1][0], pz - pts[i - 1][1]);
+        const prev = pts[Math.max(0, i - 1)];
+        const next = pts[Math.min(pts.length - 1, i + 1)];
+        let tx = next[0] - prev[0], tz = next[1] - prev[1];
+        const tl = Math.hypot(tx, tz) || 1;
+        tx /= tl; tz /= tl;
+        const nx = -tz * W2, nz = tx * W2;
         for (const side of [-1, 1]) {
           const qx = px + nx * side, qz = pz + nz * side;
-          pos.push(qx, this.heightAt(qx, qz) + 0.032, qz);
-          uvs.push(t * len * 2.1, side < 0 ? 0 : 1);
+          pos.push(qx, this.heightAt(qx, qz) + 0.034, qz);
+          uvs.push(dist * 2.1, side < 0 ? 0 : 1);
         }
       }
-      for (let s = 0; s < segs; s++) {
-        const a = base + s * 2;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = base + i * 2;
         idxs.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
       }
     };
+
+    const pushStrip = (ax, az, bx, bz) => {
+      const len = Math.hypot(bx - ax, bz - az);
+      const segs = Math.max(3, Math.ceil(len / 0.16));
+      const pts = [];
+      for (let s = 0; s <= segs; s++) {
+        const t = s / segs;
+        pts.push([ax + (bx - ax) * t, az + (bz - az) * t]);
+      }
+      pushRibbon(pts);
+    };
+
+    const pushQuadCurve = (ax, az, cx, cz, bx, bz) => {
+      const segs = 8;
+      const pts = [];
+      for (let s = 0; s <= segs; s++) {
+        const t = s / segs, u = 1 - t;
+        pts.push([
+          u * u * ax + 2 * u * t * cx + t * t * bx,
+          u * u * az + 2 * u * t * cz + t * t * bz,
+        ]);
+      }
+      pushRibbon(pts);
+    };
+
+    const pushJoint = (cx, cz) => {
+      const base = pos.length / 3;
+      pos.push(cx, this.heightAt(cx, cz) + 0.032, cz);
+      uvs.push(0.5, 0.5);
+      const K = 12;
+      for (let k = 0; k <= K; k++) {
+        const a = (k / K) * Math.PI * 2;
+        const px = cx + Math.cos(a) * W2 * 0.96, pz = cz + Math.sin(a) * W2 * 0.96;
+        pos.push(px, this.heightAt(px, pz) + 0.032, pz);
+        uvs.push(0.5 + Math.cos(a) * 0.3, 0.5 + Math.sin(a) * 0.4);
+      }
+      for (let k = 0; k < K; k++) idxs.push(base, base + 1 + k + 1, base + 1 + k);
+    };
+
+    const CARD = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         if (!isRoad(x, y)) continue;
         const cx = x + 0.5, cz = y + 0.5;
-        for (const [dx, dy] of [[1, 0], [0, 1]]) {
-          if (isRoad(x + dx, y + dy)) pushStrip(cx, cz, cx + dx, cz + dy);
+        const dirs = CARD.filter(([dx, dy]) => isRoad(x + dx, y + dy));
+        if (dirs.length === 2 && dirs[0][0] * dirs[1][0] + dirs[0][1] * dirs[1][1] === 0) {
+          // Smooth quadratic Bezier curve across 90-degree L-turns
+          const [d1x, d1y] = dirs[0], [d2x, d2y] = dirs[1];
+          pushQuadCurve(cx + d1x * 0.5, cz + d1y * 0.5, cx, cz, cx + d2x * 0.5, cz + d2y * 0.5);
+        } else if (dirs.length === 2) {
+          // Straight continuous strip across tile
+          const [d1x, d1y] = dirs[0], [d2x, d2y] = dirs[1];
+          pushStrip(cx + d1x * 0.5, cz + d1y * 0.5, cx + d2x * 0.5, cz + d2y * 0.5);
+        } else {
+          for (const [dx, dy] of dirs) {
+            pushStrip(cx, cz, cx + dx * 0.5, cz + dy * 0.5);
+          }
+          pushJoint(cx, cz);
         }
+        // Diagonal connectors when no shared cardinal bridge exists
         for (const [dx, dy] of [[1, 1], [-1, 1]]) {
           if (isRoad(x + dx, y + dy) && !isRoad(x + dx, y) && !isRoad(x, y + dy)) {
             pushStrip(cx, cz, cx + dx, cz + dy);
           }
         }
-        // Joint disc
-        const base = pos.length / 3;
-        pos.push(cx, this.heightAt(cx, cz) + 0.031, cz);
-        uvs.push(0.5, 0.5);
-        const K = 12;
-        for (let k = 0; k <= K; k++) {
-          const a = (k / K) * Math.PI * 2;
-          const px = cx + Math.cos(a) * W2 * 0.94, pz = cz + Math.sin(a) * W2 * 0.94;
-          pos.push(px, this.heightAt(px, pz) + 0.031, pz);
-          uvs.push(0.5 + Math.cos(a) * 0.3, 0.5 + Math.sin(a) * 0.4);
-        }
-        for (let k = 0; k < K; k++) idxs.push(base, base + 1 + k + 1, base + 1 + k);
       }
     }
     if (!pos.length) return;
@@ -430,9 +484,11 @@ export class AdventureView {
     geo.computeVertexNormals();
     const mat = new THREE.MeshStandardMaterial({
       map: roadTexture(),
+      bumpMap: cobblestoneBumpTexture(),
+      bumpScale: 0.025,
       transparent: true,
       depthWrite: false,
-      roughness: 0.9,
+      roughness: 0.86,
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2,
@@ -591,6 +647,8 @@ export class AdventureView {
         const r = hash2(o.x, o.y, 3);
         m.rotation.y = r < 0.5 ? -0.9 - r * 0.5 : Math.PI + 0.9 + (r - 0.5) * 0.5;
         g.add(m);
+        const sh = this.makeContactShadow(tier >= 6 ? 0.98 : 0.78);
+        g.add(sh);
         g.userData.animator = m.userData.animator;
         g.position.copy(this.tileCenter(o.x, o.y));
       } else {
@@ -604,7 +662,7 @@ export class AdventureView {
     }
     g.userData.objId = o.id;
     patchObjectFog(g);
-    g.traverse((c) => { if (c.isMesh) c.castShadow = true; });
+    g.traverse((c) => { if (c.isMesh && !c.userData.noShadow) c.castShadow = true; });
     this.scene.add(g);
     this.objModels.set(o.id, g);
     this.setObjectOwner(o.id);
@@ -616,6 +674,25 @@ export class AdventureView {
         }
       });
     }
+  }
+  makeContactShadow(size = 0.85) {
+    if (!this._contactShadowGeo) {
+      this._contactShadowGeo = new THREE.PlaneGeometry(1, 1);
+      this._contactShadowGeo.rotateX(-Math.PI / 2);
+      this._contactShadowMat = new THREE.MeshBasicMaterial({
+        map: contactShadowTexture(),
+        transparent: true,
+        depthWrite: false,
+        opacity: 0.72,
+      });
+      patchFog(this._contactShadowMat);
+    }
+    const m = new THREE.Mesh(this._contactShadowGeo, this._contactShadowMat);
+    m.scale.set(size, 1, size);
+    m.position.y = 0.025;
+    m.renderOrder = 1;
+    m.userData.noShadow = true;
+    return m;
   }
   setObjectOwner(id) {
     const o = this.state.objects[id];
@@ -646,6 +723,7 @@ export class AdventureView {
     }
     const wrap = new THREE.Group();
     wrap.add(g);
+    wrap.add(this.makeContactShadow(0.95));
     wrap.userData.animator = g.userData.animator;
     wrap.userData.heroId = h.id;
     g.rotation.y = h.facing === -1 ? Math.PI : 0;
@@ -890,7 +968,10 @@ export class AdventureView {
   // ===================================================================== camera
   centerOn(x, y, instant = false) {
     this.camTarget.set(x + 0.5, 0, y + 0.5);
-    if (instant) this.target.copy(this.camTarget);
+    if (instant) {
+      this.target.copy(this.camTarget);
+      this.updateCamera(true);
+    }
   }
   pan(dx, dz) {
     const k = this.dist * 0.05;

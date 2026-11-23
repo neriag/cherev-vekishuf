@@ -24,7 +24,8 @@ import {
 import { engine } from './engine.js';
 import {
   waterNormalTexture,
-  roadTexture,
+  cobblestoneTexture,
+  cobblestoneBumpTexture,
   terrainNormalTexture,
   glowTexture,
 } from './textures.js';
@@ -178,17 +179,17 @@ function tagBuildingId(obj, id) {
 //  Environment Diorama: Sky Dome, Mountains, Terraces, Roads, Water/Mist, Trees
 // ---------------------------------------------------------------------------
 function makeSkyDome(isNecro) {
-  const topCol = new THREE.Color(isNecro ? '#080512' : '#2b66c0');
-  const midCol = new THREE.Color(isNecro ? '#1f1037' : '#7ebdf2');
-  const horizonCol = new THREE.Color(isNecro ? '#411e58' : '#ffdca4');
-  const geo = new THREE.SphereGeometry(56, 32, 20);
+  const topCol = new THREE.Color(isNecro ? '#070412' : '#1b55b5');
+  const midCol = new THREE.Color(isNecro ? '#1b0e36' : '#58a2eb');
+  const horizonCol = new THREE.Color(isNecro ? '#3b1c58' : '#e2ecfa');
+  const geo = new THREE.SphereGeometry(58, 32, 20);
   const pos = geo.attributes.position;
   const cols = new Float32Array(pos.count * 3);
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
-    const y = Math.max(0, Math.min(1, (pos.getY(i) + 6) / 50));
-    if (y < 0.35) c.lerpColors(horizonCol, midCol, y / 0.35);
-    else c.lerpColors(midCol, topCol, (y - 0.35) / 0.65);
+    const y = Math.max(0, Math.min(1, (pos.getY(i) + 4) / 48));
+    if (y < 0.28) c.lerpColors(horizonCol, midCol, y / 0.28);
+    else c.lerpColors(midCol, topCol, (y - 0.28) / 0.72);
     cols[i * 3] = c.r;
     cols[i * 3 + 1] = c.g;
     cols[i * 3 + 2] = c.b;
@@ -203,6 +204,192 @@ function makeSkyDome(isNecro) {
   const mesh = new THREE.Mesh(geo, m);
   mesh.renderOrder = -10;
   return mesh;
+}
+
+/** Procedurally sculpted sharp alpine / gothic mountain amphitheater backdrop with slope-aware snow & cliff coloring. */
+function buildMountainBackdrop(isNecro) {
+  const group = new THREE.Group();
+  const makeRidge = (cfg) => {
+    const segU = cfg.segU, segV = cfg.segV;
+    const geo = new THREE.PlaneGeometry(1, 1, segU, segV);
+    const pos = geo.attributes.position;
+    const cols = new Float32Array(pos.count * 3);
+    const colA = new THREE.Color(cfg.baseCol);
+    const colB = new THREE.Color(cfg.cliffCol);
+    const colTop = new THREE.Color(cfg.snowCol);
+    const colFoot = new THREE.Color(cfg.footCol);
+    const tmp = new THREE.Color();
+
+    const ridgeNoise = (x, z, s) => {
+      const a = Math.abs(Math.sin(x * 0.48 + s) * Math.cos(z * 0.42 - s * 0.7));
+      const b = Math.abs(Math.sin(x * 1.25 - z * 0.95 + s * 1.9));
+      const c = Math.abs(Math.cos(x * 2.55 + z * 2.15 - s * 2.7));
+      return (1 - a) * 0.50 + (1 - b) * 0.32 + (1 - c) * 0.18;
+    };
+
+    for (let i = 0; i < pos.count; i++) {
+      const u = pos.getX(i) + 0.5; // 0..1 along arc
+      const v = pos.getY(i) + 0.5; // 0 (front base) .. 1 (back slope)
+      const angle = (u - 0.5) * cfg.arc;
+      const rad = cfg.rInner + v * cfg.depth;
+      const wx = Math.sin(angle) * rad;
+      const wz = cfg.zCenter - Math.cos(angle) * rad;
+
+      const ridgeEnv = Math.sin(Math.pow(v, 0.72) * PI);
+      const endTaper = Math.sin(Math.min(1, Math.max(0, u)) * PI);
+      const taper = 0.45 + 0.55 * Math.pow(endTaper, 0.35);
+
+      // Sharp pointed pyramidal alpine peaks + jagged crest ridges (no rounded domes!)
+      let peakSum = 0;
+      for (const pk of cfg.peaks) {
+        const du = (u - pk.u) / pk.w;
+        const dv = (v - (pk.v ?? 0.48)) / 0.44;
+        const d = Math.hypot(du, dv) * 0.74 + Math.max(Math.abs(du), Math.abs(dv)) * 0.26;
+        const cone = Math.max(0, 1 - d);
+        const sharp = Math.pow(cone, isNecro ? 1.05 : 1.18);
+        peakSum = Math.max(peakSum, pk.h * sharp);
+      }
+      const crag = ridgeNoise(wx * 0.45, wz * 0.45, cfg.seed);
+      const cragDetail = ridgeNoise(wx * 1.15, wz * 1.15, cfg.seed + 7);
+      const h = Math.max(
+        -0.4,
+        (peakSum * (0.76 + Math.pow(crag, 1.3) * 0.38) + cfg.baseH * ridgeEnv * crag) * taper * Math.pow(ridgeEnv, 0.32) +
+          (cragDetail - 0.48) * 0.85 * ridgeEnv,
+      );
+      pos.setXYZ(i, wx, h - 0.35, wz);
+    }
+
+    geo.computeVertexNormals();
+    const norm = geo.attributes.normal;
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i);
+      const x = pos.getX(i);
+      const ny = norm.getY(i);
+      const hNorm = Math.max(0, Math.min(1, y / cfg.maxH));
+      const strata = Math.sin(y * 3.1 + x * 0.42) * 0.10;
+
+      tmp.copy(colA).lerp(colB, Math.min(1, Math.max(0, (1 - ny) * 1.45 + strata)));
+      if (hNorm < 0.24) {
+        tmp.lerp(colFoot, (1 - hNorm / 0.24) * 0.72);
+      }
+      const snowLine = cfg.snowStart + Math.sin(x * 0.65 + cfg.seed) * 0.08;
+      const snowAmt = THREE.MathUtils.smoothstep(hNorm + (ny - 0.38) * 0.32, snowLine, snowLine + 0.16);
+      if (snowAmt > 0) tmp.lerp(colTop, snowAmt * cfg.snowStrength);
+
+      cols[i * 3] = tmp.r;
+      cols[i * 3 + 1] = tmp.g;
+      cols[i * 3 + 2] = tmp.b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    const m = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: cfg.roughness,
+      metalness: 0.04,
+      flatShading: true,
+    });
+    const mesh = new THREE.Mesh(geo, m);
+    mesh.receiveShadow = true;
+    return mesh;
+  };
+
+  if (!isNecro) {
+    // Near sunlit craggy alpine granite ridge — framed below the top bar so blue sky breathes above
+    group.add(makeRidge({
+      segU: 84, segV: 20, arc: 2.15, rInner: 12.4, depth: 8.6, zCenter: 0.6,
+      baseH: 2.3, maxH: 8.2, seed: 3.2, roughness: 0.9,
+      baseCol: '#7b7972', cliffCol: '#52535c', footCol: '#487638', snowCol: '#f5f9ff',
+      snowStart: 0.52, snowStrength: 0.95,
+      peaks: [
+        { u: 0.09, w: 0.14, h: 6.8 },
+        { u: 0.22, w: 0.13, h: 8.1 },
+        { u: 0.35, w: 0.12, h: 6.4 },
+        { u: 0.49, w: 0.12, h: 7.4 },
+        { u: 0.65, w: 0.13, h: 8.3 },
+        { u: 0.80, w: 0.13, h: 7.5 },
+        { u: 0.92, w: 0.13, h: 6.5 },
+      ],
+    }));
+    // Far atmospheric blue-alpine horizon spires
+    group.add(makeRidge({
+      segU: 72, segV: 16, arc: 2.35, rInner: 20.5, depth: 9.2, zCenter: 1.6,
+      baseH: 3.2, maxH: 10.6, seed: 11.7, roughness: 0.94,
+      baseCol: '#6981a8', cliffCol: '#4f6890', footCol: '#5b7496', snowCol: '#eaf2ff',
+      snowStart: 0.48, snowStrength: 0.90,
+      peaks: [
+        { u: 0.14, w: 0.15, h: 9.2 },
+        { u: 0.31, w: 0.15, h: 10.4 },
+        { u: 0.48, w: 0.14, h: 9.0 },
+        { u: 0.68, w: 0.15, h: 10.6 },
+        { u: 0.86, w: 0.15, h: 9.4 },
+      ],
+    }));
+    // Stylized sunlit alpine clouds floating high above the mountain saddles
+    const cloudMat = new THREE.MeshStandardMaterial({
+      color: '#f8fbff',
+      emissive: '#dbeafe',
+      emissiveIntensity: 0.22,
+      roughness: 0.95,
+      flatShading: true,
+      transparent: true,
+      opacity: 0.88,
+    });
+    const cloudSpecs = [
+      [-13.5, 9.8, -19.5, 1.35],
+      [-4.2, 10.8, -22.0, 1.55],
+      [6.4, 10.2, -21.0, 1.4],
+      [15.2, 9.4, -19.0, 1.25],
+    ];
+    for (const [cx, cy, cz, cs] of cloudSpecs) {
+      const cg = new THREE.Group();
+      const puffs = [
+        [0, 0, 0, 1.35, 0.55, 0.7],
+        [-1.05, -0.1, 0.1, 0.95, 0.44, 0.6],
+        [1.1, -0.08, -0.05, 1.0, 0.46, 0.62],
+        [0.32, 0.32, 0.06, 0.82, 0.42, 0.56],
+      ];
+      for (const [px, py, pz, rx, ry, rz] of puffs) {
+        const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), cloudMat);
+        m.scale.set(rx, ry, rz);
+        m.position.set(px, py, pz);
+        cg.add(m);
+      }
+      cg.position.set(cx, cy, cz);
+      cg.scale.setScalar(cs);
+      group.add(cg);
+    }
+  } else {
+    // Near jagged obsidian necropolis spires with eerie pale-violet high crags
+    group.add(makeRidge({
+      segU: 84, segV: 20, arc: 2.15, rInner: 12.4, depth: 8.6, zCenter: 0.6,
+      baseH: 2.6, maxH: 8.8, seed: 8.4, roughness: 0.88,
+      baseCol: '#342b44', cliffCol: '#1e162c', footCol: '#242030', snowCol: '#7b639e',
+      snowStart: 0.58, snowStrength: 0.72,
+      peaks: [
+        { u: 0.09, w: 0.12, h: 7.4 },
+        { u: 0.21, w: 0.11, h: 8.8 },
+        { u: 0.36, w: 0.12, h: 6.9 },
+        { u: 0.50, w: 0.11, h: 8.2 },
+        { u: 0.65, w: 0.12, h: 9.0 },
+        { u: 0.80, w: 0.11, h: 8.1 },
+        { u: 0.92, w: 0.12, h: 7.1 },
+      ],
+    }));
+    // Far dark-indigo gothic silhouette peaks
+    group.add(makeRidge({
+      segU: 72, segV: 16, arc: 2.35, rInner: 20.5, depth: 9.2, zCenter: 1.6,
+      baseH: 3.6, maxH: 11.4, seed: 19.3, roughness: 0.92,
+      baseCol: '#211834', cliffCol: '#150f24', footCol: '#1c152c', snowCol: '#4a3868',
+      snowStart: 0.55, snowStrength: 0.55,
+      peaks: [
+        { u: 0.15, w: 0.14, h: 10.0 },
+        { u: 0.34, w: 0.13, h: 11.2 },
+        { u: 0.52, w: 0.14, h: 9.6 },
+        { u: 0.71, w: 0.13, h: 11.4 },
+        { u: 0.88, w: 0.14, h: 9.8 },
+      ],
+    }));
+  }
+  return group;
 }
 
 function buildTownAmbientParticles(root, anims, isNecro) {
@@ -296,21 +483,23 @@ function buildCastleEnvironment(root, anims) {
     }
   });
 
-  // Static terrain, terraces, retaining walls, roads, bridge, mountains, trees, fountain
-  const envMesh = cachedGroup('env_castle_terrain_v2', (b) => {
+  // Sculpted multi-ridge alpine mountain amphitheater backdrop
+  root.add(buildMountainBackdrop(false));
+
+  // Static terrain, terraces, retaining walls, roads, bridge, trees, flowerbeds, fountain
+  const envMesh = cachedGroup('env_castle_terrain_v3', (b) => {
     const tNorm = terrainNormalTexture();
-    const rTex = roadTexture();
-    const grass1 = mat('#5ca042', { normalMap: tNorm, normalScale: 0.35 });
-    const grass2 = mat('#4e8e38', { normalMap: tNorm, normalScale: 0.35 });
-    const grass3 = mat('#6db34f', { normalMap: tNorm, normalScale: 0.35 });
-    const cliff = mat('#8f887c');
-    const cliffD = mat('#726c62');
-    const farPeakMat = mat('#7b8ba4', { r: 0.88 });
-    const wallSt = mat('#d6cebe');
-    const wallTrim = mat('#b8af9e');
-    const cobble = mat('#c8beac', { map: rTex });
-    const cobble2 = mat('#b0a694', { map: rTex });
-    const snow = mat('#f4f7fb', { e: '#bfd4ee', ei: 0.22 });
+    const cTex = cobblestoneTexture('castle');
+    const cBump = cobblestoneBumpTexture();
+    const grass1 = mat('#54993c', { normalMap: tNorm, normalScale: 0.4 });
+    const grass2 = mat('#478632', { normalMap: tNorm, normalScale: 0.4 });
+    const grass3 = mat('#64ab48', { normalMap: tNorm, normalScale: 0.4 });
+    const cliff = mat('#8a8376');
+    const cliffD = mat('#6f695f');
+    const wallSt = mat('#dfd7c7');
+    const wallTrim = mat('#bfb6a4');
+    const cobble = mat('#d6ccb8', { map: cTex, bumpMap: cBump, bumpScale: 0.032, r: 0.84 });
+    const cobble2 = mat('#c2b8a3', { map: cTex, bumpMap: cBump, bumpScale: 0.032, r: 0.86 });
 
     // Base valley ground
     b.cylB(grass2, 26, 28, 1.2, 0, -1.2, -1.5, 28);
@@ -355,7 +544,7 @@ function buildCastleEnvironment(root, anims) {
     // Cobblestone roads & central royal plaza + stepped ramps between terraces
     b.boxB(cobble, 16.5, 0.05, 1.15, 0, 0.31, 2.0);
     b.boxB(cobble, 1.7, 0.06, 4.2, 0, 0.31, 2.8);
-    b.cylB(cobble, 1.25, 1.3, 0.06, 0, 0.31, 2.0, 16);
+    b.cylB(cobble, 1.28, 1.34, 0.06, 0, 0.31, 2.0, 16);
     b.boxB(cobble2, 13.5, 0.05, 0.95, 0, 0.9, -1.3);
 
     // Royal Marble & Gold Fountain in the central lower plaza (x = 0, z = 2.0)
@@ -384,51 +573,28 @@ function buildCastleEnvironment(root, anims) {
       }
     }
 
-    // Multi-ridge mountain backdrop arc (near rocky ridge + far alpine horizon ridge)
-    const peaks = [
-      [-15.5, -11.5, 4.2, 7.2],
-      [-11.2, -13.0, 4.8, 8.8],
-      [-6.5, -13.8, 4.4, 7.8],
-      [-2.2, -14.2, 4.6, 8.5],
-      [2.5, -14.0, 4.5, 8.2],
-      [7.0, -13.5, 4.8, 9.0],
-      [11.5, -12.6, 4.4, 7.6],
-      [15.5, -11.0, 4.0, 6.8],
-    ];
-    peaks.forEach(([px, pz, pr, ph], i) => {
-      b.add(jitter(new THREE.ConeGeometry(pr, ph, 9), 0.35, 30 + i), i % 2 ? cliff : cliffD, [px, ph / 2 - 0.3, pz]);
-      b.add(jitter(new THREE.ConeGeometry(pr * 0.44, ph * 0.38, 9), 0.12, 60 + i), snow, [px, ph * 0.81 - 0.3, pz]);
-    });
-    const farPeaks = [
-      [-18.0, -16.5, 5.6, 10.5],
-      [-9.0, -18.2, 6.2, 12.2],
-      [0.0, -19.0, 6.5, 13.0],
-      [9.5, -18.0, 6.0, 11.8],
-      [18.0, -16.2, 5.4, 10.2],
-    ];
-    farPeaks.forEach(([px, pz, pr, ph], i) => {
-      b.add(jitter(new THREE.ConeGeometry(pr, ph, 8), 0.45, 120 + i), farPeakMat, [px, ph / 2 - 0.5, pz]);
-      b.add(jitter(new THREE.ConeGeometry(pr * 0.48, ph * 0.42, 8), 0.15, 150 + i), snow, [px, ph * 0.79 - 0.5, pz]);
-    });
-
-    // Lush oak & pine trees framing the hills
+    // Lush oak & pine trees + flowering hedges framing the hills
     const bark = mat(C.bark);
     const leaf1 = mat(C.leaf);
     const leaf2 = mat(C.leafL);
-    const pineM = mat('#2f6d34');
+    const pineM = mat('#2a6830');
+    const flowerRed = mat('#df4654');
+    const flowerGold = mat('#f2c844');
     const treeCoords = [
-      [-10.2, 0.32, 2.8, 1.1],
-      [-9.8, 0.32, 0.5, 1.2],
-      [-10.4, 1.9, -2.5, 1.15],
-      [-10.2, 1.9, -6.5, 1.25],
-      [-1.8, 2.0, -6.2, 1.0],
-      [1.8, 2.0, -6.2, 1.0],
-      [10.2, 1.95, -6.2, 1.2],
-      [10.3, 1.9, -2.2, 1.15],
-      [9.8, 0.35, 0.6, 1.1],
-      [10.2, 0.35, 2.9, 1.15],
-      [-5.6, 0.32, 3.6, 0.85],
-      [5.6, 0.32, 3.6, 0.85],
+      [-10.2, 0.32, 2.8, 1.15],
+      [-9.8, 0.32, 0.5, 1.25],
+      [-10.4, 1.9, -2.5, 1.2],
+      [-10.2, 1.9, -6.5, 1.3],
+      [-1.8, 2.0, -6.2, 1.05],
+      [1.8, 2.0, -6.2, 1.05],
+      [10.2, 1.95, -6.2, 1.25],
+      [10.3, 1.9, -2.2, 1.2],
+      [9.8, 0.35, 0.6, 1.15],
+      [10.2, 0.35, 2.9, 1.2],
+      [-5.6, 0.32, 3.6, 0.9],
+      [5.6, 0.32, 3.6, 0.9],
+      [-8.5, 1.9, -7.2, 1.2],
+      [8.5, 1.9, -7.2, 1.2],
     ];
     treeCoords.forEach(([tx, ty, tz, ts], i) => {
       b.push([tx, ty, tz], [0, i * 1.1, 0], ts);
@@ -437,13 +603,25 @@ function buildCastleEnvironment(root, anims) {
         b.sph(leaf1, 0.42, 0, 0.72, 0, 2);
         b.sph(leaf2, 0.3, 0.22, 0.62, 0.12, 2);
         b.sph(leaf1, 0.28, -0.2, 0.64, -0.1, 2);
+        b.sph(leaf2, 0.24, 0.05, 0.95, -0.05, 2);
       } else {
-        b.coneB(pineM, 0.45, 0.65, 0, 0.38, 0, 8);
-        b.coneB(pineM, 0.36, 0.55, 0, 0.72, 0, 8);
-        b.coneB(leaf1, 0.25, 0.45, 0, 1.02, 0, 8);
+        b.coneB(pineM, 0.48, 0.65, 0, 0.34, 0, 9);
+        b.coneB(pineM, 0.38, 0.56, 0, 0.68, 0, 9);
+        b.coneB(leaf1, 0.28, 0.48, 0, 0.98, 0, 9);
+        b.coneB(leaf2, 0.18, 0.36, 0, 1.24, 0, 9);
       }
       b.pop();
     });
+    // Ornamental rose & marigold hedges along the plaza walls
+    for (const [hx, hy, hz] of [
+      [-2.3, 0.32, 3.7], [2.3, 0.32, 3.7], [-6.6, 0.32, 3.7], [6.6, 0.32, 3.7],
+      [-4.8, 0.92, -0.5], [4.8, 0.92, -0.5],
+    ]) {
+      b.sph(leaf1, 0.24, hx, hy + 0.16, hz, 1, [1.5, 0.8, 1.0]);
+      b.sph(flowerRed, 0.06, hx - 0.12, hy + 0.28, hz + 0.08, 0);
+      b.sph(flowerGold, 0.06, hx + 0.10, hy + 0.29, hz + 0.06, 0);
+      b.sph(flowerRed, 0.05, hx + 0.02, hy + 0.27, hz - 0.08, 0);
+    }
 
     // Street lanterns along the main bridge and plaza
     const lanternCoords = [
@@ -456,11 +634,18 @@ function buildCastleEnvironment(root, anims) {
     ];
     lanternCoords.forEach(([lx, ly, lz]) => {
       b.cylB(MAT.iron, 0.03, 0.045, 0.55, lx, ly, lz, 6);
-      b.boxB(mat('#ffe28a', { e: '#ffaa22', ei: 1.5 }), 0.1, 0.12, 0.1, lx, ly + 0.55, lz);
+      b.boxB(mat('#ffe28a', { e: '#ffaa22', ei: 1.55 }), 0.1, 0.12, 0.1, lx, ly + 0.55, lz);
       b.pyramid(MAT.iron, 0.08, 0.07, lx, ly + 0.67, lz);
     });
   });
   root.add(envMesh);
+
+  // Soft warm glow halos on Castle street lanterns
+  for (const [lx, ly, lz] of [[-1.2, 0.95, 3.7], [1.2, 0.95, 3.7], [-2.8, 0.95, 1.6], [2.8, 0.95, 1.6]]) {
+    const lg = glow('#ffcf66', 0.65, 0.36);
+    lg.position.set(lx, ly, lz);
+    root.add(lg);
+  }
 
   // Sparkling animated normal-mapped river in foreground (z ≈ 4.95)
   const wNorm = waterNormalTexture();
@@ -533,18 +718,21 @@ function buildNecroEnvironment(root, anims) {
   moonGroup.add(moonHalo1, moonHalo2);
   root.add(moonGroup);
 
-  const envMesh = cachedGroup('env_necro_terrain_v2', (b) => {
+  // Sculpted obsidian jagged mountain range backdrop
+  root.add(buildMountainBackdrop(true));
+
+  const envMesh = cachedGroup('env_necro_terrain_v3', (b) => {
     const tNorm = terrainNormalTexture();
-    const rTex = roadTexture();
-    const ash1 = mat('#2a2533', { normalMap: tNorm, normalScale: 0.4 });
-    const ash2 = mat('#1e1a26', { normalMap: tNorm, normalScale: 0.4 });
-    const ash3 = mat('#352f42', { normalMap: tNorm, normalScale: 0.4 });
+    const cTex = cobblestoneTexture('necro');
+    const cBump = cobblestoneBumpTexture();
+    const ash1 = mat('#2c2636', { normalMap: tNorm, normalScale: 0.42 });
+    const ash2 = mat('#201c2a', { normalMap: tNorm, normalScale: 0.42 });
+    const ash3 = mat('#383146', { normalMap: tNorm, normalScale: 0.42 });
     const crag = mat('#3e384a');
     const cragD = mat('#292433');
-    const farCrag = mat('#1c1528', { r: 0.92 });
-    const wallSt = mat('#484154');
-    const wallTrim = mat('#322c3c');
-    const slate = mat('#524b5e', { map: rTex });
+    const wallSt = mat('#4f475e');
+    const wallTrim = mat('#373042');
+    const slate = mat('#827796', { map: cTex, bumpMap: cBump, bumpScale: 0.032, r: 0.85 });
     const bone = mat(C.bone);
     const runeM = mat('#58ff9a', { e: '#20e068', ei: 1.5 });
     const violetM = mat('#b070ff', { e: '#7830e0', ei: 1.4 });
@@ -584,7 +772,7 @@ function buildNecroEnvironment(root, anims) {
     // Cracked slate roads, central ritual circle & ramps
     b.boxB(slate, 16.5, 0.05, 1.05, 0, 0.31, 2.0);
     b.boxB(slate, 1.6, 0.06, 4.2, 0, 0.31, 2.8);
-    b.cylB(slate, 1.25, 1.3, 0.06, 0, 0.31, 2.0, 16);
+    b.cylB(slate, 1.28, 1.34, 0.06, 0, 0.31, 2.0, 16);
     b.boxB(slate, 13.5, 0.05, 0.95, 0, 0.9, -1.3);
 
     // Central Soul Well / Necromantic Altar in lower plaza (x = 0, z = 2.0)
@@ -618,31 +806,6 @@ function buildNecroEnvironment(root, anims) {
         b.add(new THREE.ConeGeometry(0.1, 0.48, 4), bone, [s * 0.98, 0.85, z], [0, 0, -s * 0.22]);
       }
     }
-
-    // Multi-ridge jagged dark mountain spires in background
-    const peaks = [
-      [-15.5, -11.5, 3.6, 8.2],
-      [-11.2, -13.0, 4.0, 9.8],
-      [-6.5, -13.8, 3.8, 8.8],
-      [-2.2, -14.2, 4.1, 9.6],
-      [2.5, -14.0, 3.9, 9.2],
-      [7.0, -13.5, 4.2, 10.0],
-      [11.5, -12.6, 3.8, 8.5],
-      [15.5, -11.0, 3.5, 7.6],
-    ];
-    peaks.forEach(([px, pz, pr, ph], i) => {
-      b.add(jitter(new THREE.ConeGeometry(pr, ph, 7), 0.42, 70 + i), i % 2 ? crag : cragD, [px, ph / 2 - 0.3, pz]);
-    });
-    const farPeaks = [
-      [-18.0, -16.5, 5.0, 11.2],
-      [-9.0, -18.2, 5.8, 13.0],
-      [0.0, -19.0, 6.2, 13.8],
-      [9.5, -18.0, 5.6, 12.6],
-      [18.0, -16.2, 5.0, 11.0],
-    ];
-    farPeaks.forEach(([px, pz, pr, ph], i) => {
-      b.add(jitter(new THREE.ConeGeometry(pr, ph, 7), 0.5, 190 + i), farCrag, [px, ph / 2 - 0.5, pz]);
-    });
 
     // Dead twisted trees, iron fences, gravestones, and glowing obelisks
     const deadWood = mat('#3b302c');

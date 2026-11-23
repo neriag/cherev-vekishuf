@@ -11,7 +11,7 @@ import { SPELLS, SPELL_LEVEL_NAMES, EFFECT_NAMES } from '../data/spells.js';
 import { TERRAINS } from '../data/terrain.js';
 import {
   DIFFICULTIES, HERO_COST, MAX_HEROES, dateText, playerIncome, playerHeroes, playerTowns,
-  heroStat, heroMaxMana, heroMaxMP, heroMorale, heroLuck, heroTitle, g,
+  heroStat, heroMaxMana, heroMaxMP, heroMorale, heroLuck, heroStrength, heroTitle, g,
   buildStatus, doBuild, recruitOptions, upgradeCost, canUpgradeInTown, hasBuilt, townIncome, townMageLevel,
   equipFromBackpack, unequip, armyAdd, armyCanAdd, armyTotal, armyStacks, maxAffordable, canAfford, pay, idx,
 } from '../core/state.js';
@@ -28,6 +28,7 @@ import { heroPortrait } from './heroPortraits.js';
 import { audio } from '../audio/audio.js';
 
 const SAVE_KEY = 'cherev-vekishuf-save-v1';
+const AUTO_SAVE_KEY = 'cherev-vekishuf-autosave-v1';
 
 export class UI {
   constructor(root, overlay) {
@@ -41,6 +42,8 @@ export class UI {
     this.currentPlanTile = null;
     this.selectedArmySlot = null;
     this.modalStack = [];
+    this._battleKeyHandler = null;
+    this._townCycleIdx = -1;
     this.buildDOM();
     this.bindGlobalKeys();
   }
@@ -119,7 +122,7 @@ export class UI {
 
     const heroes = playerHeroes(game.state, game.human.id);
     if (heroes.length) {
-      this.selectHero(heroes[0].id, true);
+      this.selectHero(heroes[0].id, true, true);
     } else {
       const towns = playerTowns(game.state, game.human.id);
       if (towns.length) advView.centerOn(towns[0].x, towns[0].y, true);
@@ -208,6 +211,14 @@ export class UI {
           this.closeTown?.();
           return;
         }
+        if (this.activeScreen === 'battle') {
+          this._battleKeyHandler?.(e);
+          return;
+        }
+      }
+      if (this.activeScreen === 'battle' && !this.modalStack.length) {
+        this._battleKeyHandler?.(e);
+        return;
       }
       if (this.activeScreen !== 'adventure' || this.modalStack.length || !this.game || this.game.busy) return;
       const k = e.key.toLowerCase();
@@ -216,9 +227,10 @@ export class UI {
       else if (k === 'a' || e.key === 'ArrowLeft') this.advView.pan(-1.2, 0);
       else if (k === 'd' || e.key === 'ArrowRight') this.advView.pan(1.2, 0);
       else if (k === 'h' || k === 'י') this.cycleHero();
+      else if (k === 't' || k === 'א') this.cycleTown();
       else if (k === 'm' || k === 'צ' || e.key === ' ') {
+        if (e.key === ' ') e.preventDefault();
         if (this.currentPlan && this.selectedHero) this.executeCurrentPlan();
-        else if (k === 'e' || k === 'ק') this.promptEndTurn();
       } else if (k === 'e' || k === 'ק') this.promptEndTurn();
       else if (k === 'c' || k === 'ב') {
         if (this.selectedHero) this.openSpellbook(this.selectedHero, false);
@@ -240,7 +252,7 @@ export class UI {
     return h && h.alive && h.owner === this.game.human.id ? h : null;
   }
 
-  selectHero(id, center = false) {
+  selectHero(id, center = false, instant = false) {
     this.selectedHeroId = id;
     this.selectedArmySlot = null;
     this.currentPlan = null;
@@ -248,7 +260,7 @@ export class UI {
     this.advView?.selectHero(id);
     this.advView?.clearPath();
     const h = this.selectedHero;
-    if (h && center) this.advView?.centerOn(h.x, h.y);
+    if (h && center) this.advView?.centerOn(h.x, h.y, instant);
     this.refresh();
   }
 
@@ -267,6 +279,16 @@ export class UI {
     const next = heroes[(idxNow + 1) % heroes.length];
     audio.play('click');
     this.selectHero(next.id, true);
+  }
+
+  cycleTown() {
+    const towns = playerTowns(this.game.state, this.game.human.id);
+    if (!towns.length) return;
+    this._townCycleIdx = (this._townCycleIdx + 1) % towns.length;
+    const t = towns[this._townCycleIdx];
+    audio.play('click');
+    this.advView?.centerOn(t.x, t.y);
+    this.drawMinimap();
   }
 
   async onTileClick(x, y) {
@@ -356,6 +378,42 @@ export class UI {
     this.refresh();
   }
 
+  threatInfo(hero, monster) {
+    if (!hero || !monster) return null;
+    const c = CREATURES[monster.creature];
+    const mVal = monster.count * c.value;
+    const hVal = Math.max(1, heroStrength(hero));
+    const ratio = mVal / hVal;
+    if (ratio < 0.2) return { label: monster.disposition === 'savage' ? 'חלש מאוד' : 'חלש מאוד — עשוי לברוח', cls: 'threat-trivial' };
+    if (ratio < 0.55) return { label: 'קל', cls: 'threat-easy' };
+    if (ratio < 1.05) return { label: 'שווה כוחות', cls: 'threat-fair' };
+    if (ratio < 1.75) return { label: 'מסוכן', cls: 'threat-hard' };
+    return { label: 'קטלני!', cls: 'threat-deadly' };
+  }
+
+  objectVisitTag(o) {
+    const s = this.game.state;
+    const sel = this.selectedHero;
+    const wk = Math.floor((s.day - 1) / 7);
+    if (o.type === 'windmill' || o.type === 'waterwheel') {
+      return o.lastWeek === wk ? { text: 'בוקר השבוע', ready: false } : { text: 'מוכן השבוע ✓', ready: true };
+    }
+    if (o.type === 'stables') {
+      return sel && sel.visited[o.id] === wk ? { text: 'בוקר השבוע', ready: false } : { text: 'זמין השבוע ✓', ready: true };
+    }
+    if (o.type === 'well') {
+      return sel && sel.visited[o.id] === s.day ? { text: 'בוקר היום', ready: false } : { text: 'זמין היום ✓', ready: true };
+    }
+    if (o.type === 'crypt') {
+      return o.looted ? { text: 'נבזזה', ready: false } : { text: 'לא נחקרה', ready: true };
+    }
+    const onceTypes = ['learningStone', 'marlettoTower', 'mercenaryCamp', 'starAxis', 'gardenOfRevelation', 'witchHut', 'treeOfKnowledge', 'fountain', 'temple'];
+    if (onceTypes.includes(o.type) && sel) {
+      return sel.visited[o.id] ? { text: `בוקר ע"י ${sel.name}`, ready: false } : { text: 'טרם בוקר ✓', ready: true };
+    }
+    return null;
+  }
+
   updateHoverStatus(tile) {
     if (!tile || !this.game) return;
     const s = this.game.state;
@@ -380,13 +438,15 @@ export class UI {
         desc = `העיר ${o.name} (${FACTIONS[o.faction].name} — ${own})`;
       } else if (o.type === 'monster') {
         const c = CREATURES[o.creature];
-        desc = `${stackSizeWord(o.count)} ${c.plural} (${stackSizeRange(o.count)})`;
+        const thr = this.threatInfo(this.selectedHero, o);
+        desc = `${stackSizeWord(o.count)} ${c.plural} (${stackSizeRange(o.count)})${thr ? ` • איום: ${thr.label}` : ''}`;
       } else if (o.type === 'mine') {
         const own = o.owner != null ? s.players[o.owner].name : 'לא תפוס';
         desc = `${MINES[o.resource].name} (${own})`;
       } else {
         desc = objectDisplayName(o);
-        if ( this.selectedHero && this.selectedHero.visited[o.id] ) desc += ' (בוקר)';
+        const vt = this.objectVisitTag(o);
+        if (vt) desc += ` (${vt.text})`;
       }
     }
     if (this.currentPlan && this.currentPlanTile && this.currentPlanTile.x === x && this.currentPlanTile.y === y) {
@@ -420,9 +480,11 @@ export class UI {
     } else if (o) {
       if (o.type === 'monster') {
         const c = CREATURES[o.creature];
+        const thr = this.threatInfo(this.selectedHero, o);
         html = `
           <div class="ctx-title">${stackSizeWord(o.count)} ${c.plural} (${stackSizeRange(o.count)})</div>
           <div class="ctx-sub">דרגה ${c.tier} • ${FACTIONS[c.faction].name}</div>
+          ${thr ? `<div class="threat-pill ${thr.cls}">הערכת איום מול ${this.selectedHero.name}: <b>${thr.label}</b></div>` : ''}
           <div class="ctx-stats">
             <span>התקפה: ${c.attack}</span><span>הגנה: ${c.defense}</span>
             <span>נזק: ${c.minDmg}–${c.maxDmg}</span><span>נק"פ: ${c.hp}</span><span>מהירות: ${c.speed}</span>
@@ -438,8 +500,10 @@ export class UI {
         `;
       } else {
         const meta = OBJECT_TYPES[o.type];
+        const vt = this.objectVisitTag(o);
         html = `
           <div class="ctx-title">${objectDisplayName(o)}</div>
+          ${vt ? `<div class="ctx-visit ${vt.ready ? 'ready' : 'done'}">${vt.text}</div>` : ''}
           <div class="ctx-desc">${o.type === 'mine' ? MINES[o.resource].desc : (meta?.desc || '')}</div>
         `;
       }
@@ -728,6 +792,7 @@ export class UI {
   }
 
   onNewDay(newWeek, weekMsg) {
+    this.onAutoSave?.();
     if (newWeek && weekMsg) {
       audio.play('newWeek');
       this.message({
@@ -1364,6 +1429,24 @@ export class UI {
           `;
         }).join('');
 
+        const hasGarrison = armyTotal(town.garrison) > 0;
+        // Count upgradable stacks across visiting hero & garrison
+        const upgList = [];
+        const upgTotalCost = {};
+        const scanUpg = (army) => {
+          if (!army) return;
+          for (let i = 0; i < army.length; i++) {
+            const st = army[i];
+            if (!st || !canUpgradeInTown(town, st.type)) continue;
+            const cost = upgradeCost(st.type, st.count);
+            upgList.push({ army, slot: i, st, cost });
+            for (const k in cost) upgTotalCost[k] = (upgTotalCost[k] || 0) + cost[k];
+          }
+        };
+        if (vHero) scanUpg(vHero.army);
+        scanUpg(town.garrison);
+        const anyUpgAffordable = upgList.some((u) => canAfford(p.resources, u.cost));
+
         this.screenLayer.innerHTML = `
           <div class="town-ui">
             <div class="town-top-bar">
@@ -1413,6 +1496,13 @@ export class UI {
                     <div class="empty-note">אין גיבור בשערי העיר. גייס גיבור בטברנה או הכנס גיבור לעיר כדי להעביר אליו יחידות.</div>
                   `}
                 </div>
+                ${(vHero && hasGarrison) || upgList.length ? `
+                  <div class="town-army-tools">
+                    ${vHero && hasGarrison ? `<button class="town-tool-btn" id="tbtn-take-all" title="העבר את כל היחידות מחיל המצב לגיבור">⬇ קח הכל לגיבור</button>` : ''}
+                    ${vHero && hasGarrison ? `<button class="town-tool-btn" id="tbtn-swap-army" title="החלף את כל היחידות בין חיל המצב לגיבור">⇅ החלף צבא</button>` : ''}
+                    ${upgList.length ? `<button class="town-tool-btn gold" id="tbtn-upg-all" ${!anyUpgAffordable ? 'disabled' : ''} title="שדרג את כל היחידות הניתנות לשדרוג בעיר זו">${icon('upgrade', 14)} שדרג הכל (${upgTotalCost.gold || 0} זהב)</button>` : ''}
+                  </div>
+                ` : ''}
               </div>
             </div>
           </div>
@@ -1426,6 +1516,64 @@ export class UI {
         this.screenLayer.querySelector('#tbtn-market').onclick = () => { this.sfx('click'); this.openMarketModal(renderUI); };
         const vhBox = this.screenLayer.querySelector('#town-open-vhero');
         if (vhBox && vHero) vhBox.onclick = async () => { this.sfx('click'); await this.openHeroScreen(vHero); renderUI(); };
+
+        const takeAllBtn = this.screenLayer.querySelector('#tbtn-take-all');
+        if (takeAllBtn && vHero) {
+          takeAllBtn.onclick = () => {
+            let moved = 0;
+            for (let i = 0; i < town.garrison.length; i++) {
+              const st = town.garrison[i];
+              if (st && armyAdd(vHero.army, st.type, st.count)) {
+                town.garrison[i] = null;
+                moved++;
+              }
+            }
+            if (moved) this.sfx('click');
+            else this.toast('אין משבצות פנויות אצל הגיבור.');
+            selArmy = null;
+            renderUI();
+          };
+        }
+        const swapBtn = this.screenLayer.querySelector('#tbtn-swap-army');
+        if (swapBtn && vHero) {
+          swapBtn.onclick = () => {
+            if (armyStacks(town.garrison) === 0) return;
+            const tmp = town.garrison;
+            town.garrison = vHero.army;
+            vHero.army = tmp;
+            this.sfx('click');
+            selArmy = null;
+            renderUI();
+          };
+        }
+        const upgAllBtn = this.screenLayer.querySelector('#tbtn-upg-all');
+        if (upgAllBtn) {
+          upgAllBtn.onclick = () => {
+            let done = 0;
+            for (const u of upgList) {
+              const cur = u.army[u.slot];
+              if (!cur || !canUpgradeInTown(town, cur.type)) continue;
+              const cost = upgradeCost(cur.type, cur.count);
+              if (!canAfford(p.resources, cost)) continue;
+              pay(p.resources, cost);
+              const nextType = CREATURES[cur.type].upgradeTo;
+              const existing = u.army.find((x, idx2) => idx2 !== u.slot && x && x.type === nextType);
+              if (existing) {
+                existing.count += cur.count;
+                u.army[u.slot] = null;
+              } else {
+                cur.type = nextType;
+              }
+              done++;
+            }
+            if (done) {
+              this.sfx('recruit');
+              this.toast(`שודרגו ${done} יחידות!`);
+            }
+            selArmy = null;
+            renderUI();
+          };
+        }
 
         this.screenLayer.querySelectorAll('.town-armies-col .army-slot').forEach((el) => {
           const src = el.dataset.src, slot = +el.dataset.slot;
@@ -1554,6 +1702,7 @@ export class UI {
         const targetArmy = vHero && vHero.owner === town.owner && armyStacks(town.garrison) === 0 ? vHero.army : town.garrison;
 
         const tiers = filterTier ? [filterTier] : [1, 2, 3, 4, 5, 6, 7];
+        let anyRecruitable = false;
         const rows = tiers.map((t) => {
           const opts = recruitOptions(town, t);
           if (!opts.length) return '';
@@ -1561,6 +1710,7 @@ export class UI {
           const c = CREATURES[type];
           const avail = town.available[t] || 0;
           const maxBuy = Math.min(avail, maxAffordable(res, c.cost));
+          if (maxBuy > 0) anyRecruitable = true;
           return `
             <div class="town-rec-card" data-tier="${t}" data-type="${type}">
               <img class="port-frame" src="${getCreaturePortrait(type)}" alt="${c.name}">
@@ -1581,6 +1731,7 @@ export class UI {
           <div class="modal-title">${icon('recruit', 24)} גיוס יצורים ב-${town.name}</div>
           <div class="town-rec-list">${rows || '<div class="empty-note">לא נבנו עדיין מבני מגורים ליצורים אלו.</div>'}</div>
           <div class="modal-actions">
+            ${!filterTier ? `<button class="btn-gold" id="btn-recruit-all" ${!anyRecruitable ? 'disabled' : ''}>${icon('recruit', 18)} גייס הכל (מהדרגה הגבוהה)</button>` : ''}
             ${filterTier ? `<button class="btn-silver" id="btn-show-all-tiers">הצג את כל היצורים בעיר</button>` : ''}
             <button class="btn-silver" data-close>סגור</button>
           </div>
@@ -1589,6 +1740,34 @@ export class UI {
         wrap.querySelector('[data-close]').onclick = () => { close(); onDone?.(); };
         const showAll = wrap.querySelector('#btn-show-all-tiers');
         if (showAll) showAll.onclick = () => { filterTier = null; render(); };
+
+        const recAllBtn = wrap.querySelector('#btn-recruit-all');
+        if (recAllBtn) {
+          recAllBtn.onclick = () => {
+            let boughtCount = 0;
+            for (let t = 7; t >= 1; t--) {
+              const opts = recruitOptions(town, t);
+              if (!opts.length || (town.available[t] || 0) <= 0) continue;
+              const type = opts[opts.length - 1];
+              const c = CREATURES[type];
+              const n = Math.min(town.available[t], maxAffordable(res, c.cost));
+              if (n <= 0) continue;
+              if (!armyAdd(targetArmy, type, n)) {
+                if (!vHero || !armyAdd(vHero.army, type, n)) continue;
+              }
+              pay(res, c.cost, n);
+              town.available[t] -= n;
+              boughtCount += n;
+            }
+            if (boughtCount > 0) {
+              this.sfx('recruit');
+              render();
+              onDone?.();
+            } else {
+              this.toast('אין מספיק משאבים או מקום פנוי לגיוס.');
+            }
+          };
+        }
 
         wrap.querySelectorAll('.town-rec-card').forEach((card) => {
           const tier = +card.dataset.tier;
@@ -1626,18 +1805,47 @@ export class UI {
     const tooMany = playerHeroes(s, p.id).length >= MAX_HEROES;
     const canHire = !gateBlocked && !tooMany && p.resources.gold >= HERO_COST;
 
+    // Build dynamic kingdom rumor based on live game state
+    const rumors = [];
+    const aliveHeroes = Object.values(s.heroes).filter((h) => h.alive);
+    if (aliveHeroes.length) {
+      const top = aliveHeroes.reduce((a, b) => (heroStrength(b) > heroStrength(a) ? b : a));
+      rumors.push(`"הנוודים לוחשים ש-${top.name} (השחקן ${s.players[top.owner].name}, דרגה ${top.level}) מוביל כעת את הצבא החזק ביותר בממלכה!"`);
+    }
+    const alivePlayers = s.players.filter((pl) => pl.alive);
+    if (alivePlayers.length > 1) {
+      const richest = alivePlayers.reduce((a, b) => (b.resources.gold > a.resources.gold ? b : a));
+      rumors.push(`"הסוחרים מספרים שקופת הזהב של השחקן ${richest.name} היא המלאה ביותר בכל הארץ."`);
+    }
+    const enemyTowns = Object.values(s.objects).filter((o) => o.type === 'town' && o.owner !== p.id && o.owner != null);
+    if (enemyTowns.length) {
+      rumors.push(`"עדיין נותרו ${enemyTowns.length} ערי אויב לכבוש — הדרך אל הכתר עוברת דרך חומותיהן!"`);
+    }
+    if (s.weekCreature && CREATURES[s.weekCreature]) {
+      rumors.push(`"האסטרולוגים קבעו שזהו שבוע ה${CREATURES[s.weekCreature].plural} — גידולם גדל השבוע בערים!"`);
+    }
+    rumors.push('"אומרים שבלב הממלכה שוכנים דרקונים השומרים על שרידים אגדיים עתיקים..."');
+    const rumorText = rumors[(s.day + town.name.length) % rumors.length];
+
     const cards = p.tavern.map((rid) => {
       const r = HERO_ROSTER.find((x) => x.id === rid);
       const cls = HERO_CLASSES[r.cls];
-      const fakeHero = { id: r.id, name: r.name, gender: r.gender, cls: r.cls, portraitSeed: (HERO_ROSTER.indexOf(r) + 1) * 7919 };
+      const fledId = p.fledHeroes?.[rid];
+      const fledHero = fledId && s.heroes[fledId] && !s.heroes[fledId].alive ? s.heroes[fledId] : null;
+      const fakeHero = fledHero || { id: r.id, name: r.name, gender: r.gender, cls: r.cls, portraitSeed: (HERO_ROSTER.indexOf(r) + 1) * 7919 };
+      const artCnt = fledHero ? Object.keys(fledHero.equipped).length + fledHero.backpack.length : 0;
+      const fledBadge = fledHero
+        ? `<div class="fled-badge">גיבור שנסוג — דרגה ${fledHero.level} (${fledHero.spells.length} לחשים${artCnt ? `, ${artCnt} חפצים` : ''})</div>`
+        : '';
       return `
-        <div class="tavern-card">
+        <div class="tavern-card ${fledHero ? 'returning' : ''}">
           <img class="port-frame lg" src="${heroPortrait(fakeHero, 96)}" alt="${r.name}">
           <div class="tav-info">
             <div class="row-name">${r.name} — ${r.gender === 'f' ? cls.nameF : cls.name}</div>
+            ${fledBadge}
             <div class="hs-bio">${r.bio}</div>
             <button class="btn-gold sm" data-hire="${r.id}" ${!canHire ? 'disabled' : ''}>
-              גייס גיבור (${HERO_COST} זהב)
+              ${fledHero ? `גייס מחדש (${HERO_COST} זהב)` : `גייס גיבור (${HERO_COST} זהב)`}
             </button>
           </div>
         </div>
@@ -1648,7 +1856,7 @@ export class UI {
 
     return this.pushModal(`
       <div class="modal-title">${icon('tavern', 24)} טברנת ${town.name}</div>
-      <div class="modal-body">שמועה במסבאה: <i>"אומרים שבאמצע הממלכה שוכנים דרקונים השומרים על שרידים עתיקים..."</i></div>
+      <div class="modal-body">שמועה במסבאה: <i>${rumorText}</i></div>
       ${note ? `<div class="warn-note">${note}</div>` : ''}
       <div class="tavern-grid">${cards}</div>
       <div class="modal-actions">
@@ -1794,14 +2002,23 @@ export class UI {
     `, (wrap, close) => { wrap.querySelector('[data-close]').onclick = () => close(); }, { width: '660px' });
   }
 
+  saveDayLabel(key) {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const m = raw.match(/"day"\s*:\s*(\d+)/);
+    return m ? dateText(+m[1]) : 'שמירה קיימת';
+  }
+
   openSaveLoadModal() {
-    const hasSave = !!localStorage.getItem(SAVE_KEY);
+    const saveLbl = this.saveDayLabel(SAVE_KEY);
+    const autoLbl = this.saveDayLabel(AUTO_SAVE_KEY);
     return this.pushModal(`
       <div class="modal-title">${icon('save', 24)} שמירה וטעינת משחק</div>
-      <div class="modal-body">ניתן לשמור את מצב הממלכה בדפדפן ולהמשיך בכל עת.</div>
-      <div class="modal-actions">
+      <div class="modal-body">ניתן לשמור את מצב הממלכה בדפדפן ולהמשיך בכל עת. בתחילת כל יום חדש המשחק נשמר גם אוטומטית.</div>
+      <div class="modal-actions wrap">
         <button class="btn-gold" id="btn-save-now">${icon('save', 18)} שמור משחק כעת</button>
-        <button class="btn-silver" id="btn-load-now" ${!hasSave ? 'disabled' : ''}>${icon('load', 18)} טען שמירה אחרונה</button>
+        <button class="btn-silver" id="btn-load-now" ${!saveLbl ? 'disabled' : ''}>${icon('load', 18)} טען שמירה ידנית${saveLbl ? ` (${saveLbl})` : ''}</button>
+        <button class="btn-silver" id="btn-load-auto" ${!autoLbl ? 'disabled' : ''}>${icon('load', 18)} טען שמירה אוטומטית${autoLbl ? ` (${autoLbl})` : ''}</button>
         <button class="btn-silver" data-close>סגור</button>
       </div>
     `, (wrap, close) => {
@@ -1815,9 +2032,14 @@ export class UI {
       wrap.querySelector('#btn-load-now').onclick = () => {
         this.sfx('click');
         close();
-        this.onLoadGame?.();
+        this.onLoadGame?.(SAVE_KEY);
       };
-    });
+      wrap.querySelector('#btn-load-auto').onclick = () => {
+        this.sfx('click');
+        close();
+        this.onLoadGame?.(AUTO_SAVE_KEY);
+      };
+    }, { width: '580px' });
   }
 
   openHelpModal() {
@@ -1828,13 +2050,14 @@ export class UI {
         <ul>
           <li><b>תנועה במפה:</b> בחר גיבור והקש על יעד במפה לתכנון מסלול (חיצים ירוקים = יגיע היום; חיצים אדומים = יגיע בתורות הבאים). הקש פעם שנייה על היעד או לחץ <code>רווח</code>/<code>M</code> כדי לנוע.</li>
           <li><b>ערים ובנייה:</b> ניתן לבנות מבנה אחד בכל עיר בכל יום. <b>היכל העירייה/הקפיטול</b> מגדילים את הכנסת הזהב היומית; <b>מצודה/טירה</b> מגדילות את קצב הגידול השבועי של היצורים; <b>מבני מגורים</b> מאפשרים לגייס יחידות חדשות.</li>
-          <li><b>שבוע חדש:</b> בכל 7 ימים (יום 1 של השבוע) כל מבני המגורים בערים מתמלאים ביצורים חדשים לגיוס!</li>
-          <li><b>קרבות טקטיים:</b> בקרב על שדה המשושים, היחידות פועלות לפי מהירותן. השתמש בחוכמה ב<b>יורים</b>, <b>מעופפים</b>, <b>המתנה (W)</b>, <b>הגנה (D)</b> ו<b>ספר הלחשים</b> של הגיבור.</li>
-          <li><b>קיצורי מקלדת:</b> <code>WASD</code>/חיצים להזזת מצלמה, גלגלת לזום, <code>H</code> לגיבור הבא, <code>M</code>/<code>רווח</code> לתנועה, <code>E</code> לסיום תור, <code>C</code> לספר לחשים, <code>K</code> לסקירת הממלכה, קליק ימני למידע מהיר.</li>
+          <li><b>שבוע חדש ושמירה אוטומטית:</b> בכל 7 ימים (יום 1 של השבוע) כל מבני המגורים בערים מתמלאים ביצורים חדשים לגיוס! בכל בוקר חדש המשחק נשמר אוטומטית.</li>
+          <li><b>קרבות טקטיים:</b> בקרב על שדה המשושים, היחידות פועלות לפי מהירותן. רחף על אויבים לראות נזק משוער, תגובת אויב ותוסף דהירה, ועל שטחי לחש לראות אזור פגיעה מלא. בנסיגה הגיבור שומר על דרגתו, לחשיו וחפציו וחוזר לטברנה!</li>
+          <li><b>קיצורי מקלדת (מפה):</b> <code>WASD</code>/חיצים להזזת מצלמה, גלגלת לזום, <code>H</code> לגיבור הבא, <code>T</code> לעיר הבאה, <code>M</code>/<code>רווח</code> לתנועה, <code>E</code> לסיום תור, <code>C</code> לספר לחשים, <code>K</code> לסקירת הממלכה, קליק ימני להערכת איום ומידע מהיר.</li>
+          <li><b>קיצורי מקלדת (קרב):</b> <code>W</code> המתנה, <code>D</code> הגנה, <code>C</code> ספר לחשים, <code>A</code> קרב אוטומטי, <code>S</code> מהירות (×1/×2/×3), <code>R</code> החייאת רב-מלאך, <code>Esc</code> ביטול בחירת לחש.</li>
         </ul>
       </div>
       <div class="modal-actions"><button class="btn-gold" data-close>הבנתי — לניצחון!</button></div>
-    `, (wrap, close) => { wrap.querySelector('[data-close]').onclick = () => close(); }, { width: '680px' });
+    `, (wrap, close) => { wrap.querySelector('[data-close]').onclick = () => close(); }, { width: '700px' });
   }
 
   // ===================================================================== Battle Screen
@@ -1923,6 +2146,8 @@ export class UI {
       });
       engine.setView(bView);
 
+      const speedLabel = () => (bView.speedMult > 2.4 ? '×3' : bView.speedMult > 1.3 ? '×2' : '×1');
+
       const renderBattleHUD = () => {
         if (this.activeScreen !== 'battle') return;
         const active = battle.active;
@@ -1932,6 +2157,12 @@ export class UI {
 
         const canRes = humanTurn && battle.def(active).abilities.resurrectOnce && !active.resurrectUsed &&
           battle.units.some((u) => u.side === active.side && (u.dead || u.count < u.initialCount) && !battle.def(u).abilities.undead);
+
+        const previewBanner = bView.spellMode
+          ? `בחר משבצת להטלת "${SPELLS[bView.spellMode].name}" (קליק ימני או Esc לביטול)`
+          : bView.resurrectMode
+            ? 'בחר בעל ברית שנפל או נפגע להחייאה (קליק ימני או Esc לביטול)'
+            : (logLines[logLines.length - 1] || '');
 
         this.screenLayer.innerHTML = `
           <div class="battle-ui">
@@ -1963,26 +2194,26 @@ export class UI {
                 `).join('')}
               </div>
               <div class="b-log-row">
-                <div id="battle-preview-line" class="b-preview-line">${bView.spellMode ? `בחר משבצת להטלת "${SPELLS[bView.spellMode].name}" (קליק ימני לביטול)` : (logLines[logLines.length - 1] || '')}</div>
+                <div id="battle-preview-line" class="b-preview-line">${previewBanner}</div>
               </div>
               <div class="b-controls-row">
-                <button class="cmd-btn" id="bbtn-spell" ${!humanTurn || !battle.canCast(active.side) ? 'disabled' : ''}>
-                  ${icon('spellbook', 18)} <span>הטל לחש</span>
+                <button class="cmd-btn" id="bbtn-spell" ${!humanTurn || !battle.canCast(active.side) ? 'disabled' : ''} title="פתח ספר לחשים (C)">
+                  ${icon('spellbook', 18)} <span>לחש (C)</span>
                 </button>
-                <button class="cmd-btn" id="bbtn-wait" ${!humanTurn || active.waited ? 'disabled' : ''}>
+                <button class="cmd-btn" id="bbtn-wait" ${!humanTurn || active.waited ? 'disabled' : ''} title="המתן לסוף הסבב (W)">
                   ${icon('wait', 18)} <span>המתנה (W)</span>
                 </button>
-                <button class="cmd-btn" id="bbtn-defend" ${!humanTurn ? 'disabled' : ''}>
+                <button class="cmd-btn" id="bbtn-defend" ${!humanTurn ? 'disabled' : ''} title="התגונן (+30% הגנה, D)">
                   ${icon('defend', 18)} <span>הגנה (D)</span>
                 </button>
-                ${canRes ? `<button class="cmd-btn gold" id="bbtn-res">${icon('resurrection', 18)} <span>החייאה</span></button>` : ''}
-                <button class="cmd-btn ${autoCombat ? 'accent' : ''}" id="bbtn-auto">
-                  ${icon('auto', 18)} <span>${autoCombat ? 'עצור אוטומטי' : 'קרב אוטומטי'}</span>
+                ${canRes ? `<button class="cmd-btn gold" id="bbtn-res" title="החייאת בעל ברית (R)">${icon('resurrection', 18)} <span>החייאה (R)</span></button>` : ''}
+                <button class="cmd-btn ${autoCombat ? 'accent' : ''}" id="bbtn-auto" title="קרב אוטומטי (A)">
+                  ${icon('auto', 18)} <span>${autoCombat ? 'עצור אוטומטי' : 'אוטומטי (A)'}</span>
                 </button>
-                <button class="cmd-btn" id="bbtn-speed">
-                  ${icon('speed', 18)} <span>מהירות ${bView.speedMult > 1 ? '×2' : '×1'}</span>
+                <button class="cmd-btn" id="bbtn-speed" title="שנה מהירות אנימציות (S)">
+                  ${icon('speed', 18)} <span>מהירות ${speedLabel()}</span>
                 </button>
-                <button class="cmd-btn danger" id="bbtn-flee" ${!humanTurn ? 'disabled' : ''}>
+                <button class="cmd-btn danger" id="bbtn-flee" ${!humanTurn ? 'disabled' : ''} title="נסיגה לטברנה עם חפצים ודרגה">
                   ${icon('flee', 18)} <span>נסיגה</span>
                 </button>
               </div>
@@ -2033,15 +2264,15 @@ export class UI {
           if (autoCombat && !bView.playing) await stepTurnLoop();
         };
         this.screenLayer.querySelector('#bbtn-speed').onclick = () => {
-          bView.speedMult = bView.speedMult > 1 ? 1 : 1.9;
+          bView.speedMult = bView.speedMult < 1.3 ? 1.9 : bView.speedMult < 2.4 ? 3.0 : 1;
           renderBattleHUD();
         };
         this.screenLayer.querySelector('#bbtn-flee').onclick = async () => {
           if (!humanTurn) return;
           const ok = await this.confirm({
             title: 'נסיגה משדה הקרב',
-            text: 'האם אתה בטוח שברצונך לסגת? נסיגה משמעותה תבוסה בקרב ואובדן הצבא של הגיבור!',
-            yes: 'נסוג מהקרב',
+            text: 'האם לסגת מהקרב? הצבא יאבד, אך הגיבור ישמור על דרגתו, כישוריו, לחשיו וכל חפציו הקסומים ויוכל להתגייס מחדש בטברנה!',
+            yes: 'נסוג לטברנה',
             no: 'המשך להילחם',
           });
           if (!ok) return;
@@ -2049,6 +2280,37 @@ export class UI {
           await bView.playEvents(evs);
           finishBattle();
         };
+      };
+
+      // Wire battle keyboard shortcuts (English + Hebrew keyboard layout)
+      this._battleKeyHandler = (e) => {
+        if (battle.result) return;
+        const k = e.key.toLowerCase();
+        if (e.key === 'Escape') {
+          if (bView.spellMode || bView.resurrectMode) {
+            bView.spellMode = null;
+            bView.resurrectMode = false;
+            bView.refreshHighlights();
+            renderBattleHUD();
+          }
+          return;
+        }
+        if (k === 'w' || k === "'") {
+          const btn = this.screenLayer.querySelector('#bbtn-wait');
+          if (btn && !btn.disabled) btn.click();
+        } else if (k === 'd' || k === 'ג') {
+          const btn = this.screenLayer.querySelector('#bbtn-defend');
+          if (btn && !btn.disabled) btn.click();
+        } else if (k === 'c' || k === 'ב') {
+          const btn = this.screenLayer.querySelector('#bbtn-spell');
+          if (btn && !btn.disabled) btn.click();
+        } else if (k === 'a' || k === 'ש') {
+          this.screenLayer.querySelector('#bbtn-auto')?.click();
+        } else if (k === 's' || k === 'ד') {
+          this.screenLayer.querySelector('#bbtn-speed')?.click();
+        } else if (k === 'r' || k === 'ר') {
+          this.screenLayer.querySelector('#bbtn-res')?.click();
+        }
       };
 
       const stepTurnLoop = async () => {
@@ -2076,8 +2338,10 @@ export class UI {
       };
 
       const finishBattle = async () => {
+        this._battleKeyHandler = null;
         const humanSide = battle.sides[0].ai ? 1 : 0;
         const won = battle.result.winner === humanSide;
+        const fledHuman = battle.result.fled === humanSide;
         audio.setMusic(won ? 'victory' : 'defeat');
         audio.play(won ? 'victory' : 'defeat');
 
@@ -2092,8 +2356,8 @@ export class UI {
         };
 
         await this.pushModal(`
-          <div class="modal-title ${won ? 'win-title' : 'lose-title'}">${won ? 'ניצחון מפואר!' : 'תבוסה בקרב'}</div>
-          <div class="modal-body">${won ? 'כוחותיך הכריעו את האויב בשדה הקרב!' : 'צבאך הוכרע בשדה הקרב.'}</div>
+          <div class="modal-title ${won ? 'win-title' : 'lose-title'}">${won ? 'ניצחון מפואר!' : (fledHuman ? 'נסיגה טקטית' : 'תבוסה בקרב')}</div>
+          <div class="modal-body">${won ? 'כוחותיך הכריעו את האויב בשדה הקרב!' : (fledHuman ? 'גיבורך נסוג לטברנה ושמר על דרגתו, לחשיו וחפציו הקסומים.' : 'צבאך הוכרע בשדה הקרב.')}</div>
           <div class="cas-section">
             <div><b>אבדות ${battle.sides[0].name}:</b><div class="cas-row">${lostHtml(0)}</div></div>
             <div><b>אבדות ${battle.sides[1].name}:</b><div class="cas-row">${lostHtml(1)}</div></div>
@@ -2141,6 +2405,7 @@ export class UI {
     this.hudAdv.classList.add('hidden');
     audio.setMusic('menu');
     const hasSave = !!localStorage.getItem(SAVE_KEY);
+    const hasAutoSave = !!localStorage.getItem(AUTO_SAVE_KEY);
 
     let cfg = {
       faction: 'castle',
@@ -2230,6 +2495,7 @@ export class UI {
               <button class="btn-gold lg" id="btn-start-new">${icon('attack', 22)} התחל מערכה חדשה</button>
               ${canResume ? `<button class="btn-silver lg" id="btn-resume-game">חזור למשחק הפעיל</button>` : ''}
               ${hasSave ? `<button class="btn-silver lg" id="btn-load-saved">${icon('load', 20)} טען משחק שמור</button>` : ''}
+              ${!hasSave && hasAutoSave ? `<button class="btn-silver lg" id="btn-load-autosaved">${icon('load', 20)} המשך משמירה אוטומטית</button>` : ''}
               <button class="btn-silver" id="btn-menu-help">${icon('info', 18)} איך משחקים?</button>
             </div>
           </div>
@@ -2277,7 +2543,11 @@ export class UI {
       }
       const loadBtn = this.screenLayer.querySelector('#btn-load-saved');
       if (loadBtn) {
-        loadBtn.onclick = () => { this.sfx('click'); this.onLoadGame?.(); };
+        loadBtn.onclick = () => { this.sfx('click'); this.onLoadGame?.(SAVE_KEY); };
+      }
+      const loadAutoBtn = this.screenLayer.querySelector('#btn-load-autosaved');
+      if (loadAutoBtn) {
+        loadAutoBtn.onclick = () => { this.sfx('click'); this.onLoadGame?.(AUTO_SAVE_KEY); };
       }
       this.screenLayer.querySelector('#btn-menu-help').onclick = () => { this.sfx('click'); this.openHelpModal(); };
     };
@@ -2286,4 +2556,4 @@ export class UI {
   }
 }
 
-export { SAVE_KEY };
+export { SAVE_KEY, AUTO_SAVE_KEY };

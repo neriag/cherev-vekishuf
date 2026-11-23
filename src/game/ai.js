@@ -7,7 +7,8 @@ import { RESOURCE_VALUE } from '../data/objects.js';
 import { SPELLS } from '../data/spells.js';
 import {
   idx, playerHeroes, playerTowns, heroStrength, armyValue, armyAdd, armyCanAdd, buildStatus, doBuild, recruitOptions,
-  maxAffordable, pay, canLearnSpell, heroMaxMana, armyTotal, MAX_HEROES, HERO_COST, emptyArmy, townBuildings,
+  maxAffordable, pay, canAfford, canUpgradeInTown, upgradeCost, canLearnSpell, heroMaxMana, armyTotal, MAX_HEROES,
+  HERO_COST, emptyArmy, townBuildings,
 } from '../core/state.js';
 import { marketCount, tradeQuote } from '../core/market.js';
 import { computeReach, planPath } from '../map/pathfinding.js';
@@ -40,6 +41,7 @@ export async function runAITurn(game, pid) {
           const st = town.garrison[i];
           if (st && armyAdd(h.army, st.type, st.count)) town.garrison[i] = null;
         }
+        aiUpgradeArmy(game, town, h.army);
         break;
       }
     }
@@ -53,9 +55,9 @@ export async function runAITurn(game, pid) {
       if (!target) break;
       await game.moveHero(hero, target.plan, { animate: false });
       if (!hero.alive || s.gameOver) break;
-      // at a town? recruit
+      // at a town? recruit & upgrade
       const town = game.townAt(hero.x, hero.y);
-      if (town && town.owner === pid) { aiRecruit(game, town); mergeGarrison(town, hero); }
+      if (town && town.owner === pid) { aiRecruit(game, town); mergeGarrison(town, hero); aiUpgradeArmy(game, town, hero.army); }
       if (`${hero.x},${hero.y},${hero.mp}` === before) break;
     }
   }
@@ -116,7 +118,31 @@ function aiRecruit(game, town) {
     armyAdd(target, type, n);
     town.available[tier] -= n;
   }
-  if (hero && hero.owner === town.owner) mergeGarrison(town, hero);
+  if (hero && hero.owner === town.owner) {
+    mergeGarrison(town, hero);
+    aiUpgradeArmy(game, town, hero.army);
+  }
+  aiUpgradeArmy(game, town, town.garrison);
+}
+
+function aiUpgradeArmy(game, town, army) {
+  const player = game.state.players[town.owner];
+  for (let i = 0; i < army.length; i++) {
+    const st = army[i];
+    if (!st || !canUpgradeInTown(town, st.type)) continue;
+    const cost = upgradeCost(st.type, st.count);
+    if (!canAfford(player.resources, cost)) continue;
+    if (player.resources.gold - (cost.gold || 0) < 1200) continue;
+    pay(player.resources, cost);
+    const nextType = CREATURES[st.type].upgradeTo;
+    const existing = army.find((x, idx2) => idx2 !== i && x && x.type === nextType);
+    if (existing) {
+      existing.count += st.count;
+      army[i] = null;
+    } else {
+      st.type = nextType;
+    }
+  }
 }
 
 function mergeGarrison(town, hero) {

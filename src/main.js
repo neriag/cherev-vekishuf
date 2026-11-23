@@ -11,7 +11,7 @@ import { AdventureView } from './render/adventureView.js';
 import { generateGame } from './map/generator.js';
 import { serialize, deserialize } from './core/state.js';
 import { Game } from './game/game.js';
-import { UI, SAVE_KEY } from './ui/ui.js';
+import { UI, SAVE_KEY, AUTO_SAVE_KEY } from './ui/ui.js';
 
 const canvasContainer = document.getElementById('canvas-container');
 const worldOverlay = document.getElementById('world-overlay');
@@ -51,13 +51,22 @@ ui.onSaveGame = () => {
   }
 };
 
-ui.onLoadGame = () => {
-  const raw = localStorage.getItem(SAVE_KEY);
+ui.onAutoSave = () => {
+  if (!currentGame) return;
+  try {
+    localStorage.setItem(AUTO_SAVE_KEY, serialize(currentGame.state));
+  } catch (e) {
+    console.warn('Auto-save failed:', e);
+  }
+};
+
+ui.onLoadGame = (key = SAVE_KEY) => {
+  const raw = localStorage.getItem(key);
   if (!raw) return;
   try {
     const state = deserialize(raw);
     mountState(state);
-    ui.toast('המשחק השמור נטען בהצלחה!');
+    ui.toast(key === AUTO_SAVE_KEY ? 'השמירה האוטומטית נטענה בהצלחה!' : 'המשחק השמור נטען בהצלחה!');
   } catch (e) {
     console.error('Load failed:', e);
     ui.toast('טעינת השמירה נכשלה.');

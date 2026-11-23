@@ -525,3 +525,133 @@ export function ringTexture() {
   cache.ring = t;
   return t;
 }
+
+/** Seamlessly tileable flagstone / cobblestone texture for 3D town plazas, roads & bridges (RepeatWrapping on S & T). */
+export function cobblestoneTexture(variant = 'castle') {
+  const key = 'cobble_' + variant;
+  if (cache[key]) return cache[key];
+  const S = 256;
+  const c = canvas(S, S), g = c.getContext('2d');
+  const isNecro = variant === 'necro';
+  g.fillStyle = isNecro ? '#221c2c' : '#5f5340';
+  g.fillRect(0, 0, S, S);
+
+  const r = new RNG(isNecro ? 919 : 717);
+  // Mortar grit
+  for (let i = 0; i < 800; i++) {
+    const v = isNecro ? 34 + r.int(-10, 14) : 88 + r.int(-18, 18);
+    g.fillStyle = isNecro
+      ? `rgb(${v + 4},${v},${v + 12})`
+      : `rgb(${v + 8},${v + 2},${v - 8})`;
+    g.fillRect(r.next() * S, r.next() * S, 2, 2);
+  }
+
+  const rows = 8, cols = 8;
+  const cw = S / cols, ch = S / rows;
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const ox = (row % 2) * (cw * 0.5) + r.float(-2.0, 2.0);
+      const oy = r.float(-1.5, 1.5);
+      const cx = (col * cw + ox + S) % S;
+      const cy = (row * ch + ch * 0.5 + oy + S) % S;
+      const rw = cw * r.float(0.41, 0.46);
+      const rh = ch * r.float(0.39, 0.44);
+      const shade = isNecro ? 92 + r.int(-18, 22) : 178 + r.int(-24, 24);
+      const warm = r.int(-7, 10);
+
+      for (const wx of [-S, 0, S]) {
+        for (const wy of [-S, 0, S]) {
+          const sx = cx + wx, sy = cy + wy;
+          if (sx + rw < -4 || sx - rw > S + 4 || sy + rh < -4 || sy - rh > S + 4) continue;
+
+          // Deep mortar crevice shadow
+          g.fillStyle = isNecro ? 'rgba(10,7,18,0.75)' : 'rgba(28,22,14,0.62)';
+          g.beginPath();
+          g.roundRect(sx - rw - 0.8, sy - rh - 0.8, rw * 2 + 2.4, rh * 2 + 2.4, 5);
+          g.fill();
+
+          const grd = g.createLinearGradient(sx - rw, sy - rh, sx + rw, sy + rh);
+          if (isNecro) {
+            grd.addColorStop(0, `rgb(${shade + 18},${shade + 10},${shade + 28})`);
+            grd.addColorStop(0.7, `rgb(${shade + 2},${shade - 4},${shade + 12})`);
+            grd.addColorStop(1, `rgb(${shade - 22},${shade - 24},${shade - 10})`);
+          } else {
+            grd.addColorStop(0, `rgb(${Math.min(255, shade + 24 + warm)},${Math.min(255, shade + 18 + Math.round(warm * 0.6))},${Math.min(255, shade + 4)})`);
+            grd.addColorStop(0.72, `rgb(${shade + warm},${shade - 4},${shade - 18})`);
+            grd.addColorStop(1, `rgb(${shade - 26},${shade - 30},${shade - 40})`);
+          }
+          g.fillStyle = grd;
+          g.beginPath();
+          g.roundRect(sx - rw, sy - rh, rw * 2, rh * 2, 4);
+          g.fill();
+
+          // Sunlit stone rim bevel
+          g.strokeStyle = isNecro ? 'rgba(170,155,215,0.22)' : 'rgba(255,248,225,0.34)';
+          g.lineWidth = 1.1;
+          g.stroke();
+        }
+      }
+    }
+  }
+
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  cache[key] = t;
+  return t;
+}
+
+/** Matching seamless cobblestone bump map. */
+export function cobblestoneBumpTexture() {
+  if (cache.cobbleBump) return cache.cobbleBump;
+  const S = 256;
+  const c = canvas(S, S), g = c.getContext('2d');
+  g.fillStyle = '#242424';
+  g.fillRect(0, 0, S, S);
+  const r = new RNG(717);
+  const rows = 8, cols = 8;
+  const cw = S / cols, ch = S / rows;
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const ox = (row % 2) * (cw * 0.5) + r.float(-2.0, 2.0);
+      const oy = r.float(-1.5, 1.5);
+      const cx = (col * cw + ox + S) % S;
+      const cy = (row * ch + ch * 0.5 + oy + S) % S;
+      const rw = cw * r.float(0.41, 0.46);
+      const rh = ch * r.float(0.39, 0.44);
+      const h = 180 + r.int(-25, 35);
+      for (const wx of [-S, 0, S]) {
+        for (const wy of [-S, 0, S]) {
+          const sx = cx + wx, sy = cy + wy;
+          if (sx + rw < -4 || sx - rw > S + 4 || sy + rh < -4 || sy - rh > S + 4) continue;
+          g.fillStyle = `rgb(${h},${h},${h})`;
+          g.beginPath();
+          g.roundRect(sx - rw + 1, sy - rh + 1, rw * 2 - 2, rh * 2 - 2, 4);
+          g.fill();
+        }
+      }
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  cache.cobbleBump = t;
+  return t;
+}
+
+/** Soft dark ambient-occlusion contact shadow disc for grounding heroes, monsters, and combat units. */
+export function contactShadowTexture() {
+  if (cache.contactShadow) return cache.contactShadow;
+  const S = 128;
+  const c = canvas(S, S), g = c.getContext('2d');
+  const grd = g.createRadialGradient(S / 2, S / 2, S * 0.06, S / 2, S / 2, S * 0.48);
+  grd.addColorStop(0, 'rgba(6, 8, 12, 0.62)');
+  grd.addColorStop(0.48, 'rgba(6, 8, 12, 0.34)');
+  grd.addColorStop(0.78, 'rgba(6, 8, 12, 0.10)');
+  grd.addColorStop(1, 'rgba(6, 8, 12, 0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, S, S);
+  const t = new THREE.CanvasTexture(c);
+  cache.contactShadow = t;
+  return t;
+}
